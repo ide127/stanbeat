@@ -1,259 +1,235 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useStore } from './store';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, DollarSign, Play, RefreshCw, Share2, ShieldAlert, Trash2, Users, Video } from 'lucide-react';
 import { Layout, Modal } from './components/Layout';
-import { generateGrid, formatTime, getCountryFlag } from './utils';
+import { languageOptions, t } from './i18n';
+import { useStore } from './store';
 import { GridCell, WordConfig } from './types';
-import { Share2, Award, Zap, Video, ArrowLeft, RefreshCw, Trash2, Users, DollarSign, Lock, Play } from 'lucide-react';
+import { formatTime, generateGrid, getCountryFlag } from './utils';
 
-// --- Helper: Calculate cells between two points for drag selection ---
-const getCellsBetween = (startId: string, endId: string, grid: GridCell[]): string[] => {
-  const [r1, c1] = startId.split('-').map(Number);
-  const [r2, c2] = endId.split('-').map(Number);
-  
-  const cells: string[] = [];
-  
-  // Check valid lines
-  const isHorz = r1 === r2;
-  const isVert = c1 === c2;
-  const isDiag = Math.abs(r1 - r2) === Math.abs(c1 - c2);
+const TARGET_WORDS = ['RM', 'JIN', 'SUGA', 'HOPE', 'JIMIN', 'V', 'JK'];
 
-  if (!isHorz && !isVert && !isDiag) return [startId]; // Invalid drag, just return start
-
-  const steps = Math.max(Math.abs(r1 - r2), Math.abs(c1 - c2));
-  const rStep = r2 === r1 ? 0 : (r2 > r1 ? 1 : -1);
-  const cStep = c2 === c1 ? 0 : (c2 > c1 ? 1 : -1);
-
-  for (let i = 0; i <= steps; i++) {
-    const r = r1 + (i * rStep);
-    const c = c1 + (i * cStep);
-    cells.push(`${r}-${c}`);
-  }
-  return cells;
-};
-
-// --- Screen: Home ---
 const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
-  const { setView, consumeHeart, currentUser, login } = useStore();
+  const { setView, consumeHeart, currentUser, login, language, termsAccepted, acceptTerms, seasonEndsAt } = useStore();
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [rewardIndex, setRewardIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRewardIndex((prev) => (prev + 1) % 3);
+    }, 1800);
+    return () => clearInterval(interval);
+  }, []);
+
+  const remainingText = useMemo(() => {
+    const remainMs = Math.max(0, seasonEndsAt - Date.now());
+    const totalSec = Math.floor(remainMs / 1000);
+    const h = String(Math.floor(totalSec / 3600)).padStart(2, '0');
+    const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+    const s = String(totalSec % 60).padStart(2, '0');
+    return `${h}:${m}:${s}`;
+  }, [seasonEndsAt]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      // trigger re-render for countdown
+      setRewardIndex((prev) => prev);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handlePlay = () => {
+    navigator.vibrate?.(25);
+
     if (!currentUser) {
       setShowLoginModal(true);
       return;
     }
-    const success = consumeHeart();
-    if (success) {
-      setView('GAME');
-    } else {
-      onShowHearts(); // Trigger parent modal
+
+    if (!termsAccepted) {
+      setShowTermsModal(true);
+      return;
     }
+
+    const consumed = consumeHeart();
+    if (!consumed) {
+      onShowHearts();
+      return;
+    }
+
+    setView('GAME');
   };
 
+  const rewardImages = [
+    'https://picsum.photos/seed/plane-ticket/420/200',
+    'https://picsum.photos/seed/bts-goods/420/200',
+    'https://picsum.photos/seed/seoul-night/420/200',
+  ];
+
   return (
-    <div className="flex-1 flex flex-col items-center p-6 text-center relative overflow-hidden animate-[fadeIn_0.5s_ease-out]">
-      <div className="absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b from-[#FF0080]/20 to-transparent pointer-events-none" />
-      
-      <div className="mt-8 mb-6 relative z-10">
-        <h1 className="text-5xl font-display text-white mb-2 tracking-tighter drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">
-          FIND <span className="text-[#00FFFF]">BTS</span>
-        </h1>
-        <h2 className="text-3xl font-display text-[#FF0080] italic glitch">
-          FLY TO KOREA ✈️
-        </h2>
+    <div className="flex-1 flex flex-col p-6 text-center">
+      <h1 className="text-4xl text-white font-black tracking-tight mt-4 glitch">{t(language, 'homeTitle')}</h1>
+
+      <div className="mt-4 rounded-2xl overflow-hidden border border-white/10 relative h-48">
+        <img src="https://picsum.photos/seed/bts-cutout/420/220" alt="BTS" className="w-full h-full object-cover opacity-85" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
+        <p className="absolute left-3 bottom-3 text-[#00FFFF] text-xs font-bold uppercase">{t(language, 'homeTarget')}</p>
       </div>
 
-      <div className="w-full h-48 bg-black/50 rounded-xl mb-6 overflow-hidden border border-white/10 relative group shadow-lg">
-          <img src="https://picsum.photos/400/200?random=1" alt="Idol" className="w-full h-full object-cover opacity-80 group-hover:scale-110 transition-transform duration-700" />
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black to-transparent p-4">
-              <p className="text-[#00FFFF] font-bold text-sm uppercase tracking-widest">Target: BTS</p>
-          </div>
+      <div className="mt-5">
+        <p className="text-white/60 text-xs uppercase">{t(language, 'seasonEnds')}</p>
+        <p className="text-red-500 text-3xl font-mono font-black">{remainingText}</p>
       </div>
 
-      <div className="mb-8">
-        <p className="text-white/60 text-xs uppercase tracking-widest mb-1">Season 1 Ends In</p>
-        <p className="text-4xl font-mono text-red-500 font-bold tracking-widest drop-shadow-[0_0_8px_rgba(220,38,38,0.8)]">
-          04:21:19
-        </p>
-      </div>
+      <p className="text-white/70 text-sm mt-4">
+        최단 시간에 멤버 이름을 찾으세요. 1위에게는 서울행 항공권을 드립니다.
+        <span className="text-[10px] text-white/40 align-top">* Terms apply</span>
+      </p>
 
-      <div className="w-full mt-auto mb-4">
-        <p className="text-white/70 text-sm mb-4">
-          Solve the puzzle in record time.<br/>Win a round-trip ticket to Seoul. <span className="text-[10px] text-white/30 align-top">*</span>
-        </p>
-        <button 
-          onClick={handlePlay}
-          className="w-full relative overflow-hidden bg-[#FF0080] text-white font-display text-2xl py-5 rounded-xl shadow-[0_0_20px_#FF0080] active:scale-95 transition-all group"
-        >
-          <div className="absolute inset-0 shimmer" />
-          <div className="relative flex items-center justify-center gap-3">
-            <Play fill="white" />
-            <span>PLAY NOW</span>
-            <span className="text-sm bg-black/20 px-2 py-1 rounded text-white/90 font-sans font-bold flex items-center gap-1">
-              -1 <div className="w-3 h-3 bg-red-500 transform rotate-45" />
-            </span>
-          </div>
-        </button>
-      </div>
-
-      <Modal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} title="Login Required">
-        <div className="text-center">
-            <p className="text-white/70 mb-6">You need to log in to track your ranking and win the prize.</p>
-            <button 
-                onClick={() => { login().then(() => setShowLoginModal(false)); }}
-                className="w-full bg-white text-black font-bold py-3 rounded-lg flex items-center justify-center gap-3 hover:bg-gray-200 transition-colors"
-            >
-                <div className="w-5 h-5 rounded-full bg-red-500" /> {/* Mock Google Icon */}
-                Continue with Google
-            </button>
+      <button
+        onClick={handlePlay}
+        className="w-full mt-5 relative overflow-hidden bg-[#FF0080] text-white font-black text-2xl py-5 rounded-2xl active:scale-95 transition-transform"
+      >
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-[shimmer_2s_linear_infinite]" />
+        <div className="relative flex items-center justify-center gap-3">
+          <Play fill="white" />
+          <span>{t(language, 'playNow')}</span>
         </div>
+      </button>
+
+      <div className="mt-4 rounded-xl overflow-hidden border border-white/10 bg-black/30">
+        <img src={rewardImages[rewardIndex]} alt="reward" className="w-full h-24 object-cover" />
+        <p className="text-white/80 text-xs py-2">이 모든 것이 당신의 것일 수 있습니다.</p>
+      </div>
+
+      <Modal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} title={t(language, 'loginRequired')}>
+        <p className="text-white/70 text-sm mb-4">{t(language, 'loginPrompt')}</p>
+        <button
+          onClick={() => {
+            login().then(() => setShowLoginModal(false));
+          }}
+          className="w-full bg-white text-black font-bold py-3 rounded-xl"
+        >
+          {t(language, 'continueGoogle')}
+        </button>
       </Modal>
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
+
+      <Modal isOpen={showTermsModal} onClose={() => setShowTermsModal(false)} title="서비스 이용약관">
+        <label className="flex items-start text-white/80 text-sm gap-2 mb-4 text-left">
+          <input type="checkbox" defaultChecked />
+          서비스 이용약관 및 경품 지급 정책에 동의합니다.
+        </label>
+        <button
+          onClick={() => {
+            acceptTerms();
+            setShowTermsModal(false);
+          }}
+          className="w-full bg-[#00FFFF] text-black font-bold py-2 rounded-lg"
+        >
+          동의하고 계속
+        </button>
+      </Modal>
+
+      <style>{`@keyframes shimmer {0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}`}</style>
     </div>
   );
 };
 
-// --- Screen: Game ---
 const GameScreen = () => {
   const { setView, updateBestTime } = useStore();
   const [grid, setGrid] = useState<GridCell[]>([]);
   const [words, setWords] = useState<WordConfig[]>([]);
-  
-  // Selection State
-  const [isSelecting, setIsSelecting] = useState(false);
-  const [startId, setStartId] = useState<string | null>(null);
-  const [currentId, setCurrentId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  
-  // Game State
-  const [startTime] = useState(Date.now());
+  const [startId, setStartId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [isWon, setIsWon] = useState(false);
+  const [won, setWon] = useState(false);
+  const startMs = useState(Date.now())[0];
 
   useEffect(() => {
-    const { grid: g, wordList } = generateGrid(10, ['RM', 'JIN', 'SUGA', 'HOPE', 'JIMIN', 'V', 'JK']);
-    setGrid(g);
+    const { grid: generated, wordList } = generateGrid(10, TARGET_WORDS);
+    setGrid(generated);
     setWords(wordList);
   }, []);
 
   useEffect(() => {
-    if (isWon) return;
-    const interval = setInterval(() => {
-      setElapsed(Date.now() - startTime);
-    }, 50);
-    return () => clearInterval(interval);
-  }, [startTime, isWon]);
+    if (won) return;
+    const timer = setInterval(() => {
+      setElapsed(Date.now() - startMs);
+    }, 10);
+    return () => clearInterval(timer);
+  }, [won, startMs]);
 
-  // Pointer Events for Dragging
+  useEffect(() => {
+    if (words.length > 0 && words.every((word) => word.found)) {
+      setWon(true);
+      updateBestTime(elapsed);
+    }
+  }, [elapsed, updateBestTime, words]);
+
+  const commitSelection = (ids: string[]) => {
+    const text = ids.map((id) => grid.find((cell) => cell.id === id)?.letter ?? '').join('');
+    const reverse = text.split('').reverse().join('');
+    const matched = words.find((word) => !word.found && (word.word === text || word.word === reverse));
+
+    if (!matched) return;
+
+    setWords((prev) => prev.map((word) => (word.word === matched.word ? { ...word, found: true } : word)));
+    setGrid((prev) => prev.map((cell) => (ids.includes(cell.id) ? { ...cell, found: true } : cell)));
+  };
+
   const handlePointerDown = (id: string) => {
-    if (isWon) return;
-    setIsSelecting(true);
     setStartId(id);
-    setCurrentId(id);
     setSelectedIds([id]);
   };
 
   const handlePointerEnter = (id: string) => {
-    if (!isSelecting || !startId || isWon) return;
-    if (id === currentId) return;
+    if (!startId) return;
 
-    setCurrentId(id);
-    const newPath = getCellsBetween(startId, id, grid);
-    setSelectedIds(newPath);
+    const [r1, c1] = startId.split('-').map(Number);
+    const [r2, c2] = id.split('-').map(Number);
+    const rowDiff = r2 - r1;
+    const colDiff = c2 - c1;
+
+    const sameRow = rowDiff === 0;
+    const sameCol = colDiff === 0;
+    const diagonal = Math.abs(rowDiff) === Math.abs(colDiff);
+
+    if (!sameRow && !sameCol && !diagonal) return;
+
+    const steps = Math.max(Math.abs(rowDiff), Math.abs(colDiff));
+    const rs = rowDiff === 0 ? 0 : rowDiff / Math.abs(rowDiff);
+    const cs = colDiff === 0 ? 0 : colDiff / Math.abs(colDiff);
+
+    const line = Array.from({ length: steps + 1 }, (_, idx) => `${r1 + rs * idx}-${c1 + cs * idx}`);
+    setSelectedIds(line);
   };
 
   const handlePointerUp = () => {
-    if (!isSelecting || isWon) return;
-    setIsSelecting(false);
-    
-    // Check word
-    const selectedLetters = selectedIds.map(id => grid.find(c => c.id === id)?.letter).join('');
-    const reversedLetters = selectedLetters.split('').reverse().join('');
-    
-    const foundWord = words.find(w => !w.found && (w.word === selectedLetters || w.word === reversedLetters));
-
-    if (foundWord) {
-      // Mark Found
-      const newWords = words.map(w => w.word === foundWord.word ? { ...w, found: true } : w);
-      setWords(newWords);
-      
-      const newGrid = grid.map(c => selectedIds.includes(c.id) ? { ...c, found: true } : c);
-      setGrid(newGrid);
-
-      // Check Win
-      if (newWords.every(w => w.found)) {
-        setIsWon(true);
-        updateBestTime(elapsed);
-      }
-    }
-    
-    // Reset transient selection
-    setStartId(null);
-    setCurrentId(null);
+    if (selectedIds.length) commitSelection(selectedIds);
     setSelectedIds([]);
+    setStartId(null);
   };
 
-  if (isWon) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 bg-[#1A0B2E] animate-[popIn_0.3s_ease-out]">
-        <Award size={64} className="text-[#00FFFF] mb-4 animate-bounce" />
-        <h2 className="text-4xl font-display text-white mb-2">MISSION CLEAR!</h2>
-        <p className="text-[#FF0080] font-mono text-3xl mb-8">{formatTime(elapsed)}</p>
-        
-        <div className="w-full bg-white/10 p-6 rounded-xl mb-6 backdrop-blur-md border border-white/20">
-            <div className="flex justify-between items-center mb-4">
-                <span className="text-white/60">Global Rank</span>
-                <span className="text-white font-bold">Top 5%</span>
-            </div>
-            <div className="flex justify-between items-center">
-                <span className="text-white/60">Reward</span>
-                <span className="text-[#00FFFF] font-bold">+50 EXP</span>
-            </div>
-        </div>
-
-        <button onClick={() => setView('HOME')} className="w-full bg-[#FF0080] text-white font-bold py-4 rounded-xl mb-4 shadow-[0_0_15px_#FF0080] hover:bg-[#FF0080]/90">
-            CLAIM REWARD
-        </button>
-        <button className="flex items-center gap-2 text-white/70 hover:text-white">
-            <Share2 size={18} /> Share Result
-        </button>
-      </div>
-    );
+  if (won) {
+    return <ResultScreen elapsed={elapsed} />;
   }
 
   return (
-    <div className="flex-1 flex flex-col p-4 touch-none" onPointerUp={handlePointerUp}>
-      {/* HUD */}
-      <div className="flex justify-between items-center mb-6">
-        <div className="bg-[#FF0080]/20 px-4 py-2 rounded-full border border-[#FF0080]">
-            <span className="text-[#FF0080] font-mono font-bold text-xl">{formatTime(elapsed)}</span>
-        </div>
-        <div className="text-white text-sm">
-            Target: <span className="text-[#00FFFF] font-bold">{words.filter(w => !w.found).length}</span> left
-        </div>
+    <div className="flex-1 p-4" onPointerUp={handlePointerUp}>
+      <div className="flex items-center justify-between mb-4">
+        <div className="bg-[#FF0080]/20 border border-[#FF0080] rounded-full px-3 py-1 text-[#FF0080] font-mono font-bold">{formatTime(elapsed)}</div>
+        <button onClick={() => setView('HOME')} className="text-white/70 hover:text-white">Exit</button>
       </div>
 
-      {/* Grid */}
-      <div 
-        className="grid grid-cols-10 gap-1 bg-black/40 p-2 rounded-xl border border-white/10 shadow-inner mb-6 touch-none select-none relative"
-      >
+      <div className="grid grid-cols-10 gap-1 bg-black/40 p-2 rounded-xl border border-white/10 select-none">
         {grid.map((cell) => {
-          const isSelected = selectedIds.includes(cell.id);
+          const selected = selectedIds.includes(cell.id);
           return (
             <div
               key={cell.id}
               onPointerDown={() => handlePointerDown(cell.id)}
               onPointerEnter={() => handlePointerEnter(cell.id)}
-              className={`
-                  aspect-square flex items-center justify-center text-sm font-bold rounded transition-colors duration-75 select-none
-                  ${cell.found ? 'bg-[#00FFFF] text-black shadow-[0_0_5px_#00FFFF]' : ''}
-                  ${!cell.found && isSelected ? 'bg-[#FF0080] text-white scale-95' : ''}
-                  ${!cell.found && !isSelected ? 'bg-white/5 text-white/80' : ''}
-              `}
+              className={`aspect-square rounded flex items-center justify-center text-xs font-bold ${cell.found ? 'bg-[#00FFFF] text-black' : selected ? 'bg-[#FF0080] text-white' : 'bg-white/5 text-white/80'}`}
             >
               {cell.letter}
             </div>
@@ -261,235 +237,267 @@ const GameScreen = () => {
         })}
       </div>
 
-      {/* Word List */}
-      <div className="flex flex-wrap gap-2 justify-center content-start">
-        {words.map((w, idx) => (
-            <span 
-                key={idx} 
-                className={`px-3 py-1 rounded text-xs font-bold transition-all ${w.found ? 'bg-white/10 text-white/30 line-through' : 'bg-[#1A0B2E] text-white border border-white/20'}`}
-            >
-                {w.word}
-            </span>
+      <div className="mt-4 flex flex-wrap gap-2 justify-center">
+        {words.map((word) => (
+          <span
+            key={word.word}
+            className={`text-xs px-2 py-1 rounded ${word.found ? 'bg-white/10 text-white/40 line-through' : 'bg-[#1A0B2E] text-white border border-white/20'}`}
+          >
+            {word.word}
+          </span>
         ))}
       </div>
     </div>
   );
 };
 
-// --- Screen: Leaderboard ---
+const ResultScreen = ({ elapsed }: { elapsed: number }) => {
+  const { setView } = useStore();
+
+  return (
+    <div className="flex-1 p-6 flex flex-col items-center text-center">
+      <h2 className="text-[#00FFFF] text-4xl font-black mb-2">TOP 1% ARMY</h2>
+      <p className="text-white/70 mb-4">Clear Time: {formatTime(elapsed)}</p>
+
+      <div className="w-full max-w-[250px] aspect-[9/16] bg-gradient-to-b from-[#FF0080]/40 to-[#00FFFF]/30 border border-white/20 rounded-2xl p-4 mb-4">
+        <h3 className="text-white text-2xl font-black mt-8">Rank #42</h3>
+        <p className="text-white/80 text-xs mt-2">QR: stanbeat.app/invite/u42</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 w-full">
+        <button className="bg-white text-black rounded-lg py-2 text-sm font-bold">이미지 저장</button>
+        <button className="bg-[#FF0080] text-white rounded-lg py-2 text-sm font-bold">인스타 공유</button>
+      </div>
+
+      <button onClick={() => setView('GAME')} className="mt-3 text-white/80 underline">다시 도전하기</button>
+    </div>
+  );
+};
+
 const LeaderboardScreen = () => {
-  const { setView, leaderboard, fetchLeaderboard, currentUser } = useStore();
+  const { setView, leaderboard, fetchLeaderboard, currentUser, language } = useStore();
 
   useEffect(() => {
     fetchLeaderboard();
-  }, []);
+  }, [fetchLeaderboard]);
+
+  const myEntry = leaderboard.find((entry) => entry.isCurrentUser);
+  const topTime = leaderboard[0]?.time ?? 0;
+  const gapSeconds = myEntry ? ((myEntry.time - topTime) / 1000).toFixed(2) : '15.00';
 
   return (
     <div className="flex-1 flex flex-col bg-[#0D0518]">
       <div className="p-4 flex items-center gap-4 border-b border-white/10 bg-[#1A0B2E]">
-        <button onClick={() => setView('HOME')} className="text-white/70 hover:text-white">
-            <ArrowLeft />
-        </button>
-        <h2 className="text-xl font-display text-white">GLOBAL RANKING</h2>
+        <button onClick={() => setView('HOME')} className="text-white/70 hover:text-white"><ArrowLeft /></button>
+        <h2 className="text-xl font-black text-white">{t(language, 'rankingTitle')}</h2>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
-        {leaderboard.map((entry, index) => {
-            const isTop3 = index < 3;
-            return (
-                <div 
-                    key={entry.id} 
-                    className={`flex items-center p-3 rounded-lg border ${entry.isCurrentUser ? 'bg-[#FF0080]/20 border-[#FF0080]' : 'bg-white/5 border-transparent'}`}
-                >
-                    <div className={`w-8 font-display text-lg ${isTop3 ? 'text-[#00FFFF]' : 'text-white/50'}`}>
-                        {entry.rank}
-                    </div>
-                    <div className="mr-3 text-2xl" title={entry.country}>
-                        {getCountryFlag(entry.country)}
-                    </div>
-                    <div className="flex-1">
-                        <p className={`font-bold ${entry.isCurrentUser ? 'text-[#FF0080]' : 'text-white'}`}>
-                            {entry.nickname}
-                        </p>
-                    </div>
-                    <div className="text-right">
-                        <p className="font-mono text-[#00FFFF]">{formatTime(entry.time)}</p>
-                    </div>
-                </div>
-            )
-        })}
+        {leaderboard.filter((entry) => !entry.banned).map((entry, index) => (
+          <div key={entry.id} className={`flex items-center p-3 rounded-lg border ${entry.isCurrentUser ? 'bg-[#FF0080]/20 border-[#FF0080]' : 'bg-white/5 border-transparent'}`}>
+            <div className="w-8 text-lg text-center">{index < 3 ? ['🥇', '🥈', '🥉'][index] : entry.rank}</div>
+            <img src={entry.avatarUrl} alt={entry.nickname} className="w-8 h-8 rounded-full mr-2" />
+            <div className="mr-2 text-xl" title={entry.country}>{getCountryFlag(entry.country)}</div>
+            <div className="flex-1">
+              <p className="text-white font-semibold text-sm">{entry.nickname}</p>
+              <p className="text-white/40 text-[10px]">{entry.isBot ? 'BOT' : 'PLAYER'}</p>
+            </div>
+            <p className="font-mono text-[#00FFFF]">{formatTime(entry.time)}</p>
+          </div>
+        ))}
       </div>
 
-      {/* My Rank Footer */}
       {currentUser && (
-        <div className="p-4 bg-[#1A0B2E] border-t border-[#FF0080]/30 shadow-[0_-5px_20px_rgba(0,0,0,0.5)] z-20">
-            <div className="flex justify-between items-center text-sm text-white/70 mb-2">
-                <span>My Rank: <span className="text-white font-bold">1,204</span></span>
-                <span>Gap to #1: <span className="text-red-400">-15.02s</span></span>
-            </div>
-            <button onClick={() => setView('GAME')} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg hover:bg-[#00FFFF]/80">
-                BEAT THE SCORE
-            </button>
+        <div className="sticky bottom-0 p-4 bg-[#1A0B2E] border-t border-[#FF0080]/30">
+          <div className="flex justify-between text-sm text-white/70 mb-2">
+            <span>현재 {myEntry?.rank ?? 1204}위</span>
+            <span>1위까지 -{gapSeconds}초 단축 필요!</span>
+          </div>
+          <button onClick={() => setView('GAME')} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg">
+            {t(language, 'retry')}
+          </button>
         </div>
       )}
     </div>
   );
 };
 
-// --- Screen: Admin ---
 const AdminScreen = () => {
-    const { setView } = useStore();
-    
-    const MetricCard = ({ label, value, icon, color }: any) => (
-        <div className="bg-[#1A0B2E] p-4 rounded-xl border border-white/5">
-            <div className={`flex justify-between items-start mb-2 ${color}`}>
-                {icon}
-                <span className="text-xs bg-white/10 px-1 rounded text-white/50">+12%</span>
-            </div>
-            <p className="text-2xl font-bold text-white font-display">{value}</p>
-            <p className="text-xs text-white/40">{label}</p>
-        </div>
-    );
+  const {
+    setView,
+    leaderboard,
+    heartsUsedToday,
+    adRevenue,
+    notice,
+    setNotice,
+    resetSeason,
+    generateDummyBots,
+    banUser,
+    currentUser,
+    editUserHeart,
+  } = useStore();
 
-    return (
-        <div className="flex-1 flex flex-col p-4 space-y-6 overflow-y-auto">
-             <div className="flex items-center justify-between">
-                <button onClick={() => setView('HOME')} className="text-white/70">
-                    <ArrowLeft />
-                </button>
-                <h2 className="text-white font-display text-xl">ADMIN DASHBOARD</h2>
-                <div className="w-6" />
-            </div>
+  const [noticeDraft, setNoticeDraft] = useState(notice);
+  const [heartDraft, setHeartDraft] = useState(3);
 
-            <div className="grid grid-cols-2 gap-4">
-                <MetricCard label="DAU" value="14.2k" icon={<Users />} color="text-[#00FFFF]" />
-                <MetricCard label="Revenue" value="$4,203" icon={<DollarSign />} color="text-green-400" />
-                <MetricCard label="Games Played" value="89.1k" icon={<Play />} color="text-[#FF0080]" />
-                <MetricCard label="Reports" value="2" icon={<Lock />} color="text-red-500" />
-            </div>
-
-            {/* Actions */}
-            <div className="bg-[#1A0B2E] p-4 rounded-xl border border-white/5 space-y-4">
-                <h3 className="text-white font-bold mb-2">Operations</h3>
-                <button className="w-full flex items-center justify-between bg-red-500/10 text-red-500 p-3 rounded-lg border border-red-500/20 hover:bg-red-500/20">
-                    <span className="flex items-center gap-2"><Trash2 size={16} /> Reset Season</span>
-                    <span className="text-xs">Danger</span>
-                </button>
-                 <button className="w-full flex items-center justify-between bg-blue-500/10 text-blue-400 p-3 rounded-lg border border-blue-500/20 hover:bg-blue-500/20">
-                    <span className="flex items-center gap-2"><RefreshCw size={16} /> Generate Dummy Bots</span>
-                    <span className="text-xs">Safe</span>
-                </button>
-            </div>
-
-             {/* User List Mock */}
-             <div className="bg-[#1A0B2E] p-4 rounded-xl border border-white/5">
-                <h3 className="text-white font-bold mb-4">Suspicious Users</h3>
-                {[1,2,3].map(i => (
-                    <div key={i} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
-                        <div className="flex items-center gap-2">
-                             <div className="w-8 h-8 rounded-full bg-gray-700" />
-                             <div>
-                                 <p className="text-white text-sm">SpeedRunner_{i}</p>
-                                 <p className="text-[10px] text-red-400">0.5s clear time</p>
-                             </div>
-                        </div>
-                        <button className="px-3 py-1 bg-red-500 text-white text-xs rounded">BAN</button>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
-// --- Global Modals ---
-const LanguageModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) => {
-    const languages = [
-        { code: 'KR', name: '한국어' }, { code: 'US', name: 'English' }, { code: 'JP', name: '日本語' },
-        { code: 'CN', name: '中文' }, { code: 'ID', name: 'Bahasa' }, { code: 'TH', name: 'ไทย' },
-        { code: 'VN', name: 'Tiếng Việt' }, { code: 'ES', name: 'Español' }, { code: 'BR', name: 'Português' },
-        { code: 'RU', name: 'Русский' }, { code: 'FR', name: 'Français' }, { code: 'SA', name: 'العربية' }
-    ];
-    
-    return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Select Language">
-            <div className="grid grid-cols-3 gap-3">
-                {languages.map(lang => (
-                    <button key={lang.code} className="flex flex-col items-center justify-center p-2 bg-white/5 rounded-lg hover:bg-white/10 transition-colors">
-                        <span className="text-2xl mb-1">{getCountryFlag(lang.code)}</span>
-                        <span className="text-xs text-white/70">{lang.name}</span>
-                    </button>
-                ))}
-            </div>
-        </Modal>
-    );
-};
-
-const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) => {
-    const { addHeart } = useStore();
-    return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Get More Hearts">
-            <div className="space-y-4">
-                 <button 
-                    onClick={() => { addHeart(1); onClose(); }}
-                    className="w-full flex items-center justify-between bg-[#00FFFF] text-black p-4 rounded-xl font-bold shadow-[0_0_15px_rgba(0,255,255,0.4)] hover:scale-105 transition-transform"
-                >
-                     <div className="flex items-center gap-3">
-                        <Video size={24} />
-                        <div className="text-left">
-                            <p className="leading-tight">Watch Ad</p>
-                            <p className="text-[10px] font-normal opacity-70">Support us & get +1 ❤️</p>
-                        </div>
-                     </div>
-                     <span className="bg-black/20 px-2 py-1 rounded text-xs">FREE</span>
-                 </button>
-
-                 <button className="w-full flex items-center justify-between bg-[#FF0080] text-white p-4 rounded-xl font-bold shadow-[0_0_15px_rgba(255,0,128,0.4)] hover:scale-105 transition-transform">
-                     <div className="flex items-center gap-3">
-                        <Share2 size={24} />
-                        <div className="text-left">
-                            <p className="leading-tight">Invite Friend</p>
-                            <p className="text-[10px] font-normal opacity-70">Both get +1 ❤️ instantly</p>
-                        </div>
-                     </div>
-                     <span className="bg-black/20 px-2 py-1 rounded text-xs">+1 Heart</span>
-                 </button>
-                 
-                 <div className="text-center pt-2">
-                     <p className="text-[10px] text-white/40">Daily free refill in: 02:59:12</p>
-                 </div>
-            </div>
-        </Modal>
-    );
-};
-
-// --- Main App ---
-export default function App() {
-  const { currentView } = useStore();
-  const [showLang, setShowLang] = useState(false);
-  const [showHearts, setShowHearts] = useState(false);
+  const riskWarning = leaderboard.some((entry) => entry.time <= 1000);
+  const dau = leaderboard.filter((entry) => !entry.banned).length;
 
   return (
-    <Layout 
-        onOpenLanguage={() => setShowLang(true)}
-        onOpenHearts={() => setShowHearts(true)}
-    >
-      {currentView === 'HOME' && <HomeScreen onShowHearts={() => setShowHearts(true)} />}
+    <div className="flex-1 p-4 overflow-y-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <button onClick={() => setView('HOME')} className="text-white/70"><ArrowLeft /></button>
+        <h2 className="text-white font-black text-xl">ADMIN DASHBOARD</h2>
+        <div className="w-5" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <MetricCard label="DAU" value={String(dau)} icon={<Users />} color="text-[#00FFFF]" />
+        <MetricCard label="Ad Revenue" value={`$${adRevenue.toFixed(2)}`} icon={<DollarSign />} color="text-green-400" />
+        <MetricCard label="Total Hearts Used" value={String(heartsUsedToday)} icon={<Play />} color="text-[#FF0080]" />
+        <MetricCard label="Risk Meter" value={riskWarning ? 'Warning' : 'Normal'} icon={<ShieldAlert />} color={riskWarning ? 'text-red-400' : 'text-[#00FFFF]'} />
+      </div>
+
+      <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-3">
+        <button onClick={resetSeason} className="w-full bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg py-2 flex items-center justify-center gap-2">
+          <Trash2 size={16} /> Reset Season
+        </button>
+        <button onClick={() => generateDummyBots(50)} className="w-full bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded-lg py-2 flex items-center justify-center gap-2">
+          <RefreshCw size={16} /> 봇 50명 생성 (40~60초)
+        </button>
+      </div>
+
+      <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10">
+        <p className="text-white font-semibold mb-2">공지사항 및 팝업 설정</p>
+        <textarea className="w-full h-20 bg-black/30 rounded p-2 text-white" value={noticeDraft} onChange={(e) => setNoticeDraft(e.target.value)} />
+        <button onClick={() => setNotice(noticeDraft)} className="mt-2 bg-[#00FFFF] text-black font-bold px-3 py-1 rounded">저장</button>
+      </div>
+
+      <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-2">
+        <p className="text-white font-semibold mb-2">유저 관리</p>
+        {leaderboard.filter((entry) => !entry.banned).slice(0, 8).map((entry) => (
+          <div key={entry.id} className="flex items-center justify-between bg-black/20 p-2 rounded">
+            <div className="flex items-center gap-2">
+              <img src={entry.avatarUrl} className="w-8 h-8 rounded-full" />
+              <div>
+                <p className="text-white text-sm">{entry.nickname}</p>
+                <p className="text-white/50 text-xs">{formatTime(entry.time)}</p>
+              </div>
+            </div>
+            {!entry.isCurrentUser && (
+              <button onClick={() => banUser(entry.id)} className="bg-red-500 text-white text-xs px-2 py-1 rounded">BAN</button>
+            )}
+          </div>
+        ))}
+
+        {currentUser && (
+          <div className="pt-2 border-t border-white/10">
+            <p className="text-white/70 text-xs mb-1">내 하트 강제 지급(테스트)</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={3}
+                value={heartDraft}
+                onChange={(e) => setHeartDraft(Number(e.target.value))}
+                className="w-16 bg-black/30 text-white rounded px-2 py-1"
+              />
+              <button onClick={() => editUserHeart(currentUser.id, heartDraft)} className="bg-white/10 text-white px-3 py-1 rounded text-xs">Apply</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const MetricCard = ({ label, value, icon, color }: { label: string; value: string; icon: React.ReactNode; color: string }) => (
+  <div className="bg-[#1A0B2E] p-4 rounded-xl border border-white/10">
+    <div className={`mb-2 ${color}`}>{icon}</div>
+    <p className="text-white text-2xl font-black">{value}</p>
+    <p className="text-white/40 text-xs">{label}</p>
+  </div>
+);
+
+const LanguageModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+  const { setLanguage, language } = useStore();
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Language">
+      <div className="grid grid-cols-3 gap-2">
+        {languageOptions.map((option) => (
+          <button
+            key={option.code}
+            onClick={() => setLanguage(option.code)}
+            className={`rounded-lg p-2 border ${language === option.code ? 'bg-[#00FFFF]/20 border-[#00FFFF]' : 'bg-white/5 border-transparent'}`}
+          >
+            <p className="text-2xl">{option.flag}</p>
+            <p className="text-[10px] text-white/80">{option.name}</p>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+};
+
+const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+  const { addHeart, claimDailyHeart, language } = useStore();
+  const [seconds, setSeconds] = useState(3 * 60 * 60);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = setInterval(() => {
+      setSeconds((prev) => Math.max(prev - 1, 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isOpen]);
+
+  const hh = String(Math.floor(seconds / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+  const ss = String(seconds % 60).padStart(2, '0');
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={t(language, 'heartsTitle')}>
+      <div className="space-y-3">
+        <p className="text-white/70 text-xs">{t(language, 'nextHeart')}: {hh}:{mm}:{ss}</p>
+
+        <button onClick={() => { addHeart(1); onClose(); }} className="w-full rounded-xl p-3 bg-[#00FFFF] text-black font-bold flex items-center justify-center gap-2">
+          <Video size={18} /> {t(language, 'watchAd')}
+        </button>
+
+        <button className="w-full rounded-xl p-3 bg-[#FF0080] text-white font-bold flex items-center justify-center gap-2">
+          <Share2 size={18} /> {t(language, 'inviteFriend')}
+        </button>
+
+        <button onClick={() => claimDailyHeart()} className="w-full rounded-xl p-3 bg-white/10 text-white text-sm">
+          Daily 무료 하트 받기 (+1 ❤️)
+        </button>
+
+        <p className="text-[11px] text-white/50">{t(language, 'missionGet')}</p>
+        <p className="text-[11px] text-white/50">{t(language, 'maxHearts')}</p>
+      </div>
+    </Modal>
+  );
+};
+
+export default function App() {
+  const { currentView, language } = useStore();
+  const [showLanguageModal, setShowLanguageModal] = useState(false);
+  const [showHeartsModal, setShowHeartsModal] = useState(false);
+
+  return (
+    <Layout onOpenLanguage={() => setShowLanguageModal(true)} onOpenHearts={() => setShowHeartsModal(true)}>
+      {currentView === 'HOME' && <HomeScreen onShowHearts={() => setShowHeartsModal(true)} />}
       {currentView === 'GAME' && <GameScreen />}
       {currentView === 'LEADERBOARD' && <LeaderboardScreen />}
       {currentView === 'ADMIN' && <AdminScreen />}
-      
-      <LanguageModal isOpen={showLang} onClose={() => setShowLang(false)} />
-      <HeartsModal isOpen={showHearts} onClose={() => setShowHearts(false)} />
 
-      {/* Footer Legal Trap (Only on Home/Leaderboard) */}
+      <LanguageModal isOpen={showLanguageModal} onClose={() => setShowLanguageModal(false)} />
+      <HeartsModal isOpen={showHeartsModal} onClose={() => setShowHeartsModal(false)} />
+
       {(currentView === 'HOME' || currentView === 'LEADERBOARD') && (
-         <footer className="bg-[#050208] p-4 text-center pb-8 border-t border-white/5">
-            <p className="text-[10px] text-[#333] leading-tight">
-            * Prizes are subject to availability. Participation implies acceptance of Terms. 
-            Flight tickets are economy class only. Taxes not included. 
-            Winner must be 18+ or have guardian consent. 
-            StanBeat is not affiliated with HYBE, JYP, or YG Entertainment.
-            </p>
+        <footer className="bg-[#050208] p-4 text-center border-t border-white/10">
+          <p className="text-[10px] text-[#4d4d4d] leading-tight">{t(language, 'legal')}</p>
         </footer>
       )}
     </Layout>
