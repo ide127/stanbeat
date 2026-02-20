@@ -1,107 +1,120 @@
 /**
- * League Ranking System
- * 
- * Generates a fully synthetic league of 100 players (99 synthetic + 1 real user).
- * Uses Gaussian (normal) distribution for all random values to ensure realism.
- * 
- * ALGORITHM ORDER (critical for consistency):
- * 1. Determine user's target rank based on previous rank using normal distribution
- * 2. Generate synthetic entries AROUND the user's position
- * 
- * This prevents the "got a personal best but dropped to 10th" problem.
+ * 리그 랭킹 시스템 (League Ranking System)
+ *
+ * 60~99명의 완전한 합성(synthetic) 리그를 생성합니다.
+ * 모든 난수는 가우시안(정규) 분포를 사용하여 현실적인 데이터를 생성합니다.
+ *
+ * 알고리즘 순서 (순서 중요 — 일관성을 위해 변경 금지):
+ * 1. 이전 순위를 기반으로 사용자의 목표 순위를 정규 분포로 결정
+ * 2. 목표 순위 위아래로 합성 플레이어 데이터 생성
+ *
+ * 이 방식으로 "개인 최고 기록을 갱신했는데 오히려 순위가 내려가는" 문제를 방지합니다.
  */
 
 import { LeaderboardEntry } from './types';
 
-// ─── Constants ────────────────────────────────────────────────────
-const LEAGUE_SIZE_MIN = 60;
-const LEAGUE_SIZE_MAX = 99;
-const REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-const MIN_USER_RANK = 2;
-const MAX_USER_RANK = 30;
-const TOTAL_LEAGUES_MEAN = 3624;
-const TOTAL_LEAGUES_STD = 15;
+// ─── 상수 정의 ─────────────────────────────────────────────────────
+const LEAGUE_SIZE_MIN = 60;                          // 리그 최소 인원 수
+const LEAGUE_SIZE_MAX = 99;                          // 리그 최대 인원 수
+const REFRESH_INTERVAL_MS = 30 * 60 * 1000;          // 리그 자동 갱신 주기 (30분 = 1,800,000ms)
+const MIN_USER_RANK = 2;                             // 사용자 최고 순위 제한 (1위는 항상 AI)
+const MAX_USER_RANK = 30;                            // 사용자 최저 순위 제한 (너무 뒤로는 안 감)
+const TOTAL_LEAGUES_MEAN = 3624;                     // 전체 리그 수 정규분포 평균
+const TOTAL_LEAGUES_STD = 15;                        // 전체 리그 수 정규분포 표준편차
 
+// 합성 닉네임 생성용 형용사 목록 (BTS 팬덤 감성)
 const adjectives = ['Lovely', 'Shiny', 'Happy', 'Bright', 'Neon', 'Cute', 'Royal', 'Lucky', 'Star', 'Dream', 'Sparkle', 'Moon', 'Sweet', 'Mystic', 'Crystal'];
+// 합성 닉네임 생성용 BTS 멤버/팬덤 관련 단어
 const members = ['Jimin', 'V', 'JK', 'Hobi', 'SUGA', 'RM', 'Jin', 'ARMY', 'Kookie', 'TaeTae', 'Mochi', 'Tiger', 'Yoongi', 'Namjoon'];
+// 합성 플레이어에게 랜덤으로 할당할 국가 코드 목록
 const countries = ['KR', 'US', 'JP', 'BR', 'TH', 'ID', 'PH', 'FR', 'DE', 'VN', 'MX', 'AR', 'TR', 'IN', 'GB', 'ES', 'IT', 'PL', 'RU', 'MY'];
 
-// ─── Types ────────────────────────────────────────────────────────
+// ─── 타입 정의 ─────────────────────────────────────────────────────
+// 리그 데이터 전체 구조 (로컬스토리지에 저장하고 store.ts에서 읽음)
 export interface LeagueData {
-    leagueId: string;
-    leagueSize: number;
-    totalLeagues: number;
-    lastRefresh: number;
-    entries: LeaderboardEntry[];
-    userRank: number;
-    userBestAtGeneration: number | null;
+    leagueId: string;                      // 리그 고유 식별자 (유저ID + 날짜로 생성된 해시값)
+    leagueSize: number;                    // 이 리그의 총 플레이어 수 (60~99)
+    totalLeagues: number;                  // 현재 전 세계에서 진행 중인 리그 수 (UI 표시용)
+    lastRefresh: number;                   // 마지막으로 리그를 갱신한 타임스탬프 (밀리초)
+    entries: LeaderboardEntry[];           // 정렬된 리더보드 항목 배열 (rank 오름차순)
+    userRank: number;                      // 현재 유저의 리그 내 순위 (0이면 기록 없음)
+    userBestAtGeneration: number | null;   // 리그 생성 시점의 유저 최고 기록 (신기록 감지에 사용)
 }
 
-// ─── Gaussian Random (Box-Muller Transform) ──────────────────────
+// ─── 가우시안 난수 생성기 (Box-Muller 변환) ────────────────────────
 /**
- * Generates a normally-distributed random number.
- * Uses the Box-Muller transform for true Gaussian distribution.
+ * 정규 분포(가우시안)를 따르는 난수를 생성합니다.
+ * Box-Muller 변환을 사용하여 균일 분포(Math.random)를 정규 분포로 변환.
+ * 실제 경쟁 게임의 점수 분포와 유사한 데이터를 만들기 위해 사용.
+ *
+ * @param mean   - 분포의 평균값 (대부분의 값이 이 근처에 몰림)
+ * @param stdDev - 표준편차 (값이 평균에서 얼마나 퍼지는지)
  */
 export function gaussianRandom(mean: number, stdDev: number): number {
     let u1 = 0;
     let u2 = 0;
-    // Avoid log(0)
+    // log(0) = -Infinity 방지: 0이 나오면 다시 시도
     while (u1 === 0) u1 = Math.random();
     while (u2 === 0) u2 = Math.random();
+    // Box-Muller 공식: 두 균일 분포 난수를 정규 분포 난수로 변환
     const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-    return mean + z * stdDev;
+    return mean + z * stdDev; // 평균에 더해 원하는 분포로 이동 및 스케일링
 }
 
-/** Clamp a value between min and max */
+/** 값을 min~max 범위로 클램핑 (범위를 벗어나지 않도록 강제) */
 function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
+    return Math.max(min, Math.min(max, value)); // min보다 작으면 min, max보다 크면 max 반환
 }
 
 /**
- * Generate a hard-to-compare, random-looking league ID.
- * Uses a combination of hash + random components to create a hex-like string
- * that is virtually impossible to compare between users.
+ * 비교하기 어려운 리그 고유 ID 생성 (16자리 16진수 해시)
+ * 유저 ID + 현재 날짜(시즌 번호)를 섞어 해시를 만들기 때문에:
+ * - 같은 유저라도 날짜가 바뀌면 다른 리그 ID를 가짐 (일일 리그 로테이션)
+ * - 다른 유저는 항상 다른 리그 ID를 가짐 (리그 비교 불가)
  */
 function generateLeagueId(userId: string): string {
-    // Mix day-of-year into league ID so it changes daily
+    // 오늘의 시즌 번호(연중 일수)를 혼합하여 리그 ID가 매일 바뀌도록 함
     const dayOfYear = getCurrentSeasonNumber();
-    const hash = hashCode(userId + 'league_v3_day' + dayOfYear);
-    const part1 = ((Math.abs(hash) * 2654435761) >>> 0).toString(16).padStart(8, '0');
-    const part2 = ((Math.abs(hash * 7 + 13) * 2246822519) >>> 0).toString(16).padStart(8, '0');
-    return `${part1}-${part2}`.toUpperCase();
+    const hash = hashCode(userId + 'league_v3_day' + dayOfYear);   // 유저ID + 날짜로 해시 생성
+    // 해시를 두 부분으로 분리하고 추가 혼합하여 비슷한 입력도 완전히 다른 출력 생성
+    const part1 = ((Math.abs(hash) * 2654435761) >>> 0).toString(16).padStart(8, '0'); // 앞 8자리
+    const part2 = ((Math.abs(hash * 7 + 13) * 2246822519) >>> 0).toString(16).padStart(8, '0'); // 뒤 8자리
+    return `${part1}-${part2}`.toUpperCase(); // 대문자 16진수 형식으로 반환 (예: A1B2C3D4-E5F60708)
 }
 
-/** Generate a random league size between 60-99, seeded by userId + day */
+/** 유저ID + 날짜 기반으로 60~99 사이의 리그 크기를 결정적(deterministic)으로 생성
+ *  같은 유저, 같은 날은 항상 동일한 리그 크기 → 새로고침마다 인원 수가 바뀌지 않음 */
 function getLeagueSize(userId: string): number {
-    const dayOfYear = getCurrentSeasonNumber();
-    const hash = Math.abs(hashCode(userId + 'size_v1_day' + dayOfYear));
-    return LEAGUE_SIZE_MIN + (hash % (LEAGUE_SIZE_MAX - LEAGUE_SIZE_MIN + 1));
+    const dayOfYear = getCurrentSeasonNumber();                      // 오늘이 연중 몇 번째 날인지
+    const hash = Math.abs(hashCode(userId + 'size_v1_day' + dayOfYear)); // 유저ID + 날짜 해시
+    return LEAGUE_SIZE_MIN + (hash % (LEAGUE_SIZE_MAX - LEAGUE_SIZE_MIN + 1)); // 60~99 범위로 매핑
 }
 
-/** Generate a synthetic nickname */
+/** seed 값으로부터 결정적으로 BTS 팬덤 스타일 닉네임 생성
+ *  예: seed=42 → 'ShinyJimin_6553' 형태의 닉네임 */
 function generateSyntheticNickname(seed: number): string {
-    const adj = adjectives[seed % adjectives.length];
-    const member = members[(seed * 7 + 3) % members.length];
-    const num = ((seed * 13 + 7) % 9000 + 1000).toString();
+    const adj = adjectives[seed % adjectives.length];            // seed로 형용사 선택
+    const member = members[(seed * 7 + 3) % members.length];     // 소수 곱으로 다양한 멤버 선택
+    const num = ((seed * 13 + 7) % 9000 + 1000).toString();      // 1000~9999 사이의 4자리 숫자
     return `${adj}${member}_${num}`;
 }
 
-/** Generate a synthetic avatar URL (deterministic per seed) */
+/** DiceBear API를 이용하여 seed 기반 아바타 URL 생성 (동일 seed → 항상 동일 이미지) */
 function syntheticAvatar(seed: number): string {
     return `https://api.dicebear.com/9.x/adventurer-neutral/svg?seed=stanbeat${seed}`;
 }
 
-// ─── Core League Generation ──────────────────────────────────────
+// ─── 핵심 리그 생성 함수 ──────────────────────────────────────────
 /**
- * Generate a complete league with 100 players.
- * 
- * @param userTime - User's best time in milliseconds
- * @param userId - User's unique ID
- * @param userNickname - User's display name
- * @param userCountry - User's country code
- * @param userAvatarUrl - User's avatar URL
- * @param previousRank - User's rank from last generation (null if first time)
- * @param hasNewBest - Whether user has achieved a new personal best since last generation
+ * 실제 유저를 포함한 완전한 리그를 생성합니다.
+ *
+ * @param userTime      - 유저의 최고 기록 (밀리초)
+ * @param userId        - 유저 고유 ID
+ * @param userNickname  - 리더보드에 표시할 닉네임
+ * @param userCountry   - 유저 국가 코드 (국기 표시)
+ * @param userAvatarUrl - 유저 아바타 이미지 URL
+ * @param previousRank  - 이전 리그에서의 순위 (처음이면 null)
+ * @param hasNewBest    - 이번에 신기록을 달성했는지 여부
  */
 export function generateLeague(
     userTime: number,
@@ -112,42 +125,46 @@ export function generateLeague(
     previousRank: number | null,
     hasNewBest: boolean,
 ): LeagueData {
-    const leagueSize = getLeagueSize(userId);
-    // 1. DETERMINE USER'S TARGET RANK
+    const leagueSize = getLeagueSize(userId); // 이 리그의 총 인원 수 결정 (60~99)
+
+    // ─── 1단계: 유저의 목표 순위 결정 ──────────────────────────────
+    // 정규 분포를 이용해 순위를 랜덤하게 결정하되, 이전 순위를 기반으로 연속성 유지
     let targetRank: number;
     if (previousRank === null) {
-        // First time: sample from N(15, 5) for wider 2-30 range
+        // 처음 플레이: 평균 15위, 표준편차 5의 정규분포로 2~30위 범위에서 결정
         targetRank = Math.round(gaussianRandom(15, 5));
     } else if (hasNewBest) {
-        // User improved: trend rank upward (closer to 2)
+        // 신기록 달성: 이전 순위보다 2칸 앞(평균)으로 이동하는 경향 (동기 부여)
         targetRank = Math.round(gaussianRandom(previousRank - 2, 2));
     } else {
-        // Regular refresh: slight drift around current rank
+        // 일반 갱신: 이전 순위 근처에서 약간 오르내림 (±2.5 표준편차)
         targetRank = Math.round(gaussianRandom(previousRank, 2.5));
     }
+    // 순위가 허용 범위를 벗어나지 않도록 클램핑 (최소 2위, 최대 30위 또는 리그크기-5)
     targetRank = clamp(targetRank, MIN_USER_RANK, Math.min(MAX_USER_RANK, leagueSize - 5));
 
-    // 2. GENERATE RANK 1 ENTRY (always slightly faster than user)
-    const gapToFirst = Math.abs(gaussianRandom(1500, 500)); // ~1.5s faster on average
-    const rank1Time = Math.max(5000, userTime - gapToFirst); // Minimum 5 seconds
+    // ─── 2단계: 1위 합성 항목 생성 ─────────────────────────────────────
+    // 1위 플레이어는 항상 유저보다 약 1.5초 빠른 시간을 가짐 (달성 가능해 보이는 목표)
+    const gapToFirst = Math.abs(gaussianRandom(1500, 500)); // 평균 1.5초 더 빠름
+    const rank1Time = Math.max(5000, userTime - gapToFirst); // 최소 5초 (비현실적인 기록 방지)
 
-    // 3. BUILD ENTRIES ARRAY
+    // ─── 3단계: 모든 항목 배열 구성 ───────────────────────────────────
     const entries: LeaderboardEntry[] = [];
-    const baseSeed = Math.abs(hashCode(userId + 'league'));
+    const baseSeed = Math.abs(hashCode(userId + 'league')); // 리그 내 일관된 닉네임/아바타를 위한 시드
 
-    // Rank 1 entry
+    // 1위 합성 항목 추가 (항상 가장 빠른 기록)
     entries.push(createSyntheticEntry(1, rank1Time, baseSeed + 1));
 
-    // Entries between rank 1 and user (ranks 2 to targetRank-1)
+    // 2위부터 (목표순위-1)까지: 유저 위에 있는 플레이어들 (선형 보간으로 자연스러운 분포)
     for (let rank = 2; rank < targetRank; rank++) {
-        const fraction = (rank - 1) / (targetRank - 1);
-        const interpolatedTime = rank1Time + (userTime - rank1Time) * fraction;
-        const noise = gaussianRandom(0, 300); // ±300ms noise
-        const time = Math.max(rank1Time, Math.round(interpolatedTime + noise));
+        const fraction = (rank - 1) / (targetRank - 1); // 1위~유저 사이를 균등하게 나누는 비율
+        const interpolatedTime = rank1Time + (userTime - rank1Time) * fraction; // 선형 보간
+        const noise = gaussianRandom(0, 300); // ±300ms의 자연스러운 노이즈 추가
+        const time = Math.max(rank1Time, Math.round(interpolatedTime + noise)); // 1위보다 빠를 수 없음
         entries.push(createSyntheticEntry(rank, time, baseSeed + rank));
     }
 
-    // User entry at targetRank
+    // 목표 순위에 실제 유저 항목 삽입
     entries.push({
         id: userId,
         nickname: userNickname,
@@ -155,63 +172,65 @@ export function generateLeague(
         avatarUrl: userAvatarUrl,
         time: userTime,
         rank: targetRank,
-        isCurrentUser: true,
-        isBot: false,
+        isCurrentUser: true,  // 리더보드에서 분홍 하이라이트 표시
+        isBot: false,         // 실제 유저임을 표시
     });
 
-    // Entries below user (ranks targetRank+1 to leagueSize)
+    // 유저 아래 순위들: 유저보다 평균 500ms씩 느린 합성 플레이어 생성
     let prevTime = userTime;
     for (let rank = targetRank + 1; rank <= leagueSize; rank++) {
-        const increment = Math.abs(gaussianRandom(500, 200)); // ~500ms slower per rank
-        prevTime = prevTime + increment;
+        const increment = Math.abs(gaussianRandom(500, 200)); // 평균 500ms 증가, ±200ms 노이즈
+        prevTime = prevTime + increment; // 이전 플레이어보다 조금씩 느려짐
         entries.push(createSyntheticEntry(rank, Math.round(prevTime), baseSeed + rank));
     }
 
-    // 4. SORT & RE-ASSIGN RANKS (ensure consistency after noise)
-    entries.sort((a, b) => a.time - b.time);
+    // ─── 4단계: 시간순 정렬 및 순위 재할당 ────────────────────────────
+    // 노이즈 추가로 인해 순서가 흐트러질 수 있으므로 실제 시간 기준으로 재정렬
+    entries.sort((a, b) => a.time - b.time); // 빠른 시간순(오름차순) 정렬
     entries.forEach((entry, idx) => {
-        entry.rank = idx + 1;
+        entry.rank = idx + 1; // 정렬 후 실제 순위 재할당 (1부터 시작)
     });
 
-    // Find user's actual rank after sorting
-    const actualUserRank = entries.findIndex((e) => e.isCurrentUser) + 1;
+    // 정렬 후 실제 유저의 최종 순위 확인
+    const actualUserRank = entries.findIndex((e) => e.isCurrentUser) + 1; // 0-indexed → 1-indexed
 
-    // 5. GENERATE LEAGUE METADATA
+    // ─── 5단계: 리그 메타데이터 생성 ──────────────────────────────────
     const totalLeagues = Math.round(gaussianRandom(TOTAL_LEAGUES_MEAN, TOTAL_LEAGUES_STD));
 
     return {
-        leagueId: generateLeagueId(userId),
-        leagueSize,
-        totalLeagues: Math.max(3500, totalLeagues),
-        lastRefresh: Date.now(),
-        entries,
-        userRank: actualUserRank,
-        userBestAtGeneration: userTime,
+        leagueId: generateLeagueId(userId),          // 이 유저만의 고유 리그 ID
+        leagueSize,                                   // 이 리그의 총 인원
+        totalLeagues: Math.max(3500, totalLeagues),   // UI에 표시할 전체 리그 수 (최소 3500)
+        lastRefresh: Date.now(),                      // 생성 시각 기록 (30분 후 갱신 판단에 사용)
+        entries,                                      // 정렬된 리더보드 항목 배열
+        userRank: actualUserRank,                     // 유저의 최종 순위
+        userBestAtGeneration: userTime,               // 생성 시점의 유저 최고 기록 (신기록 감지용)
     };
 }
 
 /**
- * Generate showcase data for guest/non-logged-in users.
- * Returns 10 random league winners to display as motivation.
+ * 게스트(비로그인) 유저를 위한 쇼케이스 데이터 생성
+ * 홈 화면에서 다른 리그들의 승자 10명을 보여줘 경쟁 분위기를 조성하는 데 사용
+ * 반환: 10명의 합성 리그 우승자 목록과 전체 리그 수
  */
 export function generateGuestShowcase(): { winners: LeaderboardEntry[]; totalLeagues: number } {
     const totalLeagues = Math.round(gaussianRandom(TOTAL_LEAGUES_MEAN, TOTAL_LEAGUES_STD));
     const winners: LeaderboardEntry[] = [];
 
     for (let i = 0; i < 10; i++) {
-        const seed = Math.floor(Math.random() * 100000) + i * 7919; // prime-spaced seeds
-        const time = Math.round(8000 + Math.abs(gaussianRandom(4000, 2000))); // 8s ~ 14s
+        const seed = Math.floor(Math.random() * 100000) + i * 7919; // 소수 간격 시드 (패턴 방지)
+        const time = Math.round(8000 + Math.abs(gaussianRandom(4000, 2000))); // 8~14초 사이 현실적인 기록
         const leagueHash = ((seed * 2654435761) >>> 0).toString(16).padStart(8, '0').toUpperCase();
         winners.push({
             id: `guest_showcase_${i}`,
-            nickname: generateSyntheticNickname(seed),
-            country: countries[seed % countries.length],
-            avatarUrl: syntheticAvatar(seed),
-            time,
-            rank: 1,
+            nickname: generateSyntheticNickname(seed),         // 랜덤 BTS 팬덤 닉네임
+            country: countries[seed % countries.length],       // 랜덤 국가
+            avatarUrl: syntheticAvatar(seed),                  // seed 기반 아바타
+            time,                                              // 합성 완료 기록
+            rank: 1,                                           // 우승자이므로 항상 1위
             isCurrentUser: false,
             isBot: true,
-            leagueLabel: leagueHash.slice(0, 8), // Show league hash for display
+            leagueLabel: leagueHash.slice(0, 8),              // 리그 ID 앞 8자리 표시
         });
     }
 
@@ -256,37 +275,37 @@ export function generateViewOnlyLeague(userId: string): LeagueData {
 }
 
 /**
- * Refresh the league if 30 minutes have passed.
- * Returns the same league data if not enough time has passed.
+ * 30분이 지났으면 리그를 갱신하고, 아직이면 기존 리그를 반환합니다.
+ * 단, 신기록 달성 시에는 30분이 안 지나도 즉시 리그를 재생성합니다.
  */
 export function refreshLeagueIfNeeded(
-    current: LeagueData | null,
-    userTime: number | null,
+    current: LeagueData | null,  // 현재 저장된 리그 데이터 (최초 생성 전이면 null)
+    userTime: number | null,     // 유저의 현재 최고 기록 (없으면 null)
     userId: string,
     userNickname: string,
     userCountry: string,
     userAvatarUrl: string,
 ): LeagueData | null {
-    if (!userTime) return current;
+    if (!userTime) return current; // 최고 기록이 없으면 리그 생성 불가
 
     const now = Date.now();
 
     if (!current) {
-        // First time: generate fresh league
+        // 처음 플레이 완료: 새로운 리그 생성 (이전 순위 없음, 신기록 아님)
         return generateLeague(userTime, userId, userNickname, userCountry, userAvatarUrl, null, false);
     }
 
-    const timeSinceRefresh = now - current.lastRefresh;
+    const timeSinceRefresh = now - current.lastRefresh; // 마지막 갱신 후 경과 시간
     if (timeSinceRefresh < REFRESH_INTERVAL_MS) {
-        // Not enough time passed, but if user got a new best, regenerate immediately
+        // 30분이 아직 안 지났지만, 신기록을 세웠다면 즉시 재생성 (보상감 극대화)
         const hasNewBest = current.userBestAtGeneration !== null && userTime < current.userBestAtGeneration;
         if (hasNewBest) {
             return generateLeague(userTime, userId, userNickname, userCountry, userAvatarUrl, current.userRank, true);
         }
-        return current;
+        return current; // 30분 안 지났고 신기록도 아니면 기존 리그 유지
     }
 
-    // 30 minutes passed: refresh with rank continuity
+    // 30분 경과: 순위 연속성을 고려하여 리그 갱신
     const hasNewBest = current.userBestAtGeneration !== null && userTime < current.userBestAtGeneration;
     return generateLeague(userTime, userId, userNickname, userCountry, userAvatarUrl, current.userRank, hasNewBest);
 }
@@ -335,26 +354,32 @@ export function getMsUntilNextUtcMidnight(): number {
     return nextMidnight.getTime() - now.getTime();
 }
 
-// ─── Helper Functions ────────────────────────────────────────────
+// ─── 내부 헬퍼 함수 ───────────────────────────────────────────────
+
+/** 주어진 순위, 시간, seed로 합성 리더보드 항목 하나를 생성 */
 function createSyntheticEntry(rank: number, time: number, seed: number): LeaderboardEntry {
     return {
-        id: `syn_${seed}`,
-        nickname: generateSyntheticNickname(seed),
-        country: countries[seed % countries.length],
-        avatarUrl: syntheticAvatar(seed),
-        time,
-        rank,
-        isCurrentUser: false,
-        isBot: true, // Hidden from UI, used internally
+        id: `syn_${seed}`,                                 // 합성 유저 고유 ID
+        nickname: generateSyntheticNickname(seed),        // seed 기반 BTS 팬덤 닉네임
+        country: countries[seed % countries.length],      // seed 기반 국가 코드
+        avatarUrl: syntheticAvatar(seed),                 // seed 기반 아바타 URL
+        time,                                             // 배정된 완료 시간 (밀리초)
+        rank,                                             // 리그 내 순위
+        isCurrentUser: false,                             // 합성 플레이어이므로 항상 false
+        isBot: true,                                      // 합성 플레이어 표시 (내부 용도)
     };
 }
 
+/**
+ * 문자열을 32비트 정수 해시로 변환 (djb2 변형 알고리즘)
+ * 동일 입력 → 항상 동일 출력 (deterministic)으로 시드 기반 데이터 생성에 사용
+ */
 function hashCode(str: string): number {
-    let hash = 0;
+    let hash = 0; // 해시 초기값
     for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash;
+        const char = str.charCodeAt(i);       // 각 문자의 UTF-16 코드 포인트
+        hash = ((hash << 5) - hash) + char;   // hash * 31 + char (비트 시프트 최적화)
+        hash = hash & hash;                   // 32비트 정수로 강제 변환 (오버플로우 방지)
     }
-    return hash;
+    return hash; // 음수일 수 있음 → 사용 시 Math.abs() 필요
 }

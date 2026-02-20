@@ -569,12 +569,15 @@ export const useStore = create<AppState>((set, get) => ({
     if (!user || get().rewardListenerUnsubscribe) return;
 
     console.log('[Adscend] Initializing reward listener for', user.id);
+    // listenForRewards 콜백: 새로운 광고 보상 수신 시 하트 지급 및 Firestore 청구 처리
     const unsub = listenForRewards(user.id, (reward) => {
-      console.log('[Adscend] New reward received:', reward);
-      // Grant heart
+      console.log('[Adscend] 새 보상 수신:', reward);
+      // 유저에게 하트 1개 지급
       get().addHeart(1);
-      // Mark as claimed in Firestore
-      claimRewardInFirestore(reward.id).catch(console.error);
+      // Firestore에 보상 청구 완료 기록 (이중 지급 방지)
+      // reward를 명시적으로 타입 캐스팅하여 id 속성에 안전하게 접근
+      const { id: rewardId } = reward as { id: string };
+      claimRewardInFirestore(rewardId).catch(console.error);
     });
     set({ rewardListenerUnsubscribe: unsub });
   },
