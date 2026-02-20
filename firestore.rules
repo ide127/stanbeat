@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User Profiles
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Leaderboard
+    match /scores/{scoreId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Ad Rewards (Adscend Media)
+    match /adRewards/{rewardId} {
+      // Users can only read their own rewards and update the 'claimedAt' field
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow update: if request.auth != null 
+                    && request.auth.uid == resource.data.userId 
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimedAt']);
+      allow create, delete: if false;
+    }
+  }
+}

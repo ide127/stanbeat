@@ -3,12 +3,12 @@ export const baseMessages = {
   liveTicker: '[LIVE] {user} just reached TOP 1% 🔥',
   homeTitle: 'Find BTS, Fly to Korea ✈️',
   homeTarget: 'Target: BTS',
-  seasonEnds: 'Season 1 Ends In',
+  seasonLabel: '2026년도 {seasonNum}번째 시즌 종료까지',
   playNow: 'PLAY NOW (-1 ❤️)',
   loginRequired: 'Login Required',
   loginPrompt: '로그인하고 1등 도전하기',
   continueGoogle: 'Continue with Google',
-  legal: '* 경품은 내부 사정에 따라 동급 상품으로 대체되거나, 참여 인원 미달 시 이월될 수 있습니다. 참여자 5,000명 이상일 때 유효하며 제세공과금은 본인 부담입니다.',
+  legal: '* 경품은 내부 사정에 따라 동급 상품으로 대체되거나, 참여 인원 미달 시 이월될 수 있습니다. 참여자 5,000명 이상일 때 유효하며 제세공과금은 본인 부담입니다. 배송 지연 가능.',
   languageTitle: 'Select Language',
   heartsTitle: '하트가 다 떨어졌어요! 😱',
   nextHeart: '다음 무료 하트까지',
@@ -23,7 +23,129 @@ export const baseMessages = {
   save: '저장',
   resultTitle: 'TOP 1% ARMY',
   saveImage: '이미지 저장',
-  instagramShare: '인스타 공유',
+  description: '최단 시간에 멤버 이름을 찾으세요. 전체 1위에게는 서울행 항공권을, 각 리그 1위에게는 BTS 굿즈를 드립니다.',
+  termsApply: '* Terms apply',
+  rewardText: '전체 1위: 서울행 항공권 ✈️ | 각 리그 1위: BTS 공식 굿즈 🎁',
+  termsTitle: '서비스 이용약관',
+  termsAgree: '서비스 이용약관 및 경품 지급 정책에 동의합니다.',
+  termsAccept: '동의하고 계속',
+  retryGame: '다시 도전하기',
+  currentRank: '현재 {rank}위',
+  gapToFirst: '1위까지 -{gap} 단축 필요!',
+  noRecordYet: '아직 기록이 없어요! 어서 시작하세요! 🔥',
+  startGameCta: '게임 시작하기',
+  dailyHeart: 'Daily 무료 하트 받기 (+1 ❤️)',
+  loginWithGoogle: 'Login with Google',
+  exitGame: 'Exit',
+  share: '공유',
+  copyLink: '링크 복사',
+  linkCopied: '링크가 복사되었습니다!',
+  history: '기록',
+  noHistory: '아직 게임 기록이 없습니다.',
+  bestRecord: '최고 기록',
+  gameCount: '총 {count}회 플레이',
+  noticePopupLabel: '공지사항 팝업 표시',
+  userManagement: '유저 관리',
+  botGenerate: '봇 {count}명 생성 (40~60초)',
+  resetSeasonBtn: 'Reset Season',
+  noticeSettings: '공지사항 및 팝업 설정',
+  applyBtn: 'Apply',
+  heartForceGive: '내 하트 강제 지급(테스트)',
+  leaguePrize: '🎁 리그 1위 보상: BTS 공식 굿즈',
+  overallPrize: '✈️ 전체 1위 보상: 서울행 항공권',
+  // New keys for previously hardcoded strings
+  logout: '로그아웃',
+  profile: '프로필',
+  clearTime: '클리어 타임',
+  bannedMessage: '이 계정은 정지되었습니다.',
+  noHeartsForRetry: '다시 도전하려면 하트가 필요합니다!',
+  termsFullText: `서비스 이용약관
+
+제1조 (목적)
+본 약관은 StanBeat(이하 「서비스」)의 이용조건 및 절차, 이용자와 운영자의 권리·의무에 관한 사항을 규정합니다.
+
+제2조 (경품 지급 정책)
+1. 경품은 시즌 종료 후 상위 랭커에게 지급됩니다.
+2. 경품은 내부 사정에 따라 동급의 상품으로 대체되거나, 참여 인원이 5,000명 미만일 시 차기 시즌으로 이월될 수 있습니다.
+3. 당첨자 발표 후 항공권 발권까지 최대 180일 소요될 수 있습니다.
+4. 제세공과금은 당첨자 본인이 부담합니다.
+5. 배송 지연이 발생할 수 있습니다.
+
+제3조 (하트 시스템)
+1. 하트는 게임 1회 참여에 1개가 소비됩니다.
+2. 하트는 최대 3개까지만 보관 가능합니다.
+3. 하트는 획득 후 3시간이 지나면 소멸됩니다.
+4. 매일 UTC 00:00 기준 무료 하트 1개가 지급됩니다.
+
+제4조 (부정행위 금지)
+자동화 도구, 매크로, 비정상적 접근을 통한 기록은 무효 처리되며 계정이 영구 정지될 수 있습니다.
+
+제5조 (면책 사항)
+서비스는 현 상태 그대로 제공되며, 운영자는 서비스 중단·변경에 대해 사전 고지 없이 조치할 수 있습니다.`,
+  // Ad system i18n keys
+  adVideoHint: '광고 시청을 완료하고 X를 눌러 하트 진행도를 올리세요.',
+  adMissionHint: '미션을 완료하면 잠시 후 자동으로 하트가 지급됩니다.',
+  videoProgress: '시청 진행도: {current}/{total} (완료 시 {reward}개)',
+  offerwallButton: '📋 참여형 미션 (+{reward} ❤️)',
+  // Side navigation
+  playGame: '🎮 게임 시작',
+  chargeHearts: '💖 하트 충전',
+  // League ranking system
+  rankingBoardTitle: '🏆 랭킹보드',
+  leagueInfo: 'League #{leagueNum} · {players}명 · 총 {totalLeagues}개 리그 진행 중',
+  leagueSyncNotice: '타 유저 기록은 30분마다 동기화됩니다',
+  almostFirst: '{gap}만 더 줄이면 1등! 🔥',
+  nextSync: '다음 동기화: {time}',
+  // Guest leaderboard (not logged in)
+  guestLeagueTitle: '🏆 실시간 리그 1등 현황',
+  guestLeagueSubtitle: '현재 {count}개의 리그가 진행 중입니다!',
+  guestLeagueCta: '당신도 참가해서 리그 1위를 하고 BTS 굿즈를 받아가세요! 전체 1위는 서울행 항공권! 🎁',
+  guestLeagueBtn: '지금 참가하기 →',
+  guestLeagueLabel: '리그',
+  // Friend invite flow
+  inviteStep1: '① 아래 링크를 친구에게 공유하세요',
+  inviteStep2: '② 친구가 이 링크로 가입합니다',
+  inviteStep3: '③ 친구가 첫 게임을 완료하면, 당신에게 ❤️ +1이 즉시 지급됩니다!',
+  inviteTitle: '친구 초대로 하트 받기',
+  // Daily heart countdown
+  dailyHeartCountdown: '다음 무료 하트까지: {time}',
+  dailyHeartReady: '🎁 무료 하트 받기 가능!',
+  // Winner testimonials (30+ accumulated, showing 5)
+  winnersTitle: '✈️ 당첨자 후기',
+  winnersSubtitle: '총 {total}건의 후기 중 {shown}건을 표시합니다',
+  testimonial1: '시즌 3 리그 1위로 BTS 포토카드 세트를 받았어요! 처음에는 반신반의했지만... 진짜 됐습니다!!',
+  testimonial2: '33초대 기록으로 리그 1위를 했고, 3주 뒤에 BTS 공식 굿즈가 도착했습니다. 꿈만 같아요 🎁',
+  testimonial3: 'BTS 라이트스틱이랑 포토카드 받았어요! StanBeat 덕분에 컬렉션이 풍성해졌어요!',
+  testimonial4: '친구랑 같이 시작했는데 저만 리그 1위! 굿즈 언박싱하면서 환호했어요 😭🎁',
+  testimonial5: '매일 틈틈이 연습했더니 28초대 나오더라구요. 결국 리그 1위로 굿즈 당첨! 아직도 믿기지 않아요.',
+  testimonial6: '처음엔 그냥 재밌어서 했는데, 진짜 BTS 앨범이 올 줄은 몰랐어요. StanBeat 최고!',
+  testimonial7: 'BTS 콘서트 보러 서울 가는 게 꿈이었는데, 전체 1위 하면 항공권도 준다니 열심히 해볼게요 💜',
+  testimonial8: '45초에서 시작해서 30초까지 줄이는 데 2주 걸렸어요. 그리고 리그 1위! 노력은 배신하지 않아요.',
+  testimonial9: '남미에서 참가했는데 리그 1위로 BTS 포토북을 받았어요. 감사합니다!',
+  testimonial10: 'BTS 라이트스틱 받아서 방에 전시해놨어요! 친구들이 부러워해요 🇰🇷',
+  testimonial11: '반신반의하면서 매일 3판씩 했는데, 결국 해냈어요. 굿즈 택배 받았을 때 소리 질렀습니다.',
+  testimonial12: 'StanBeat 시즌 47에서 리그 1위! BTS 공식 머천다이즈 풀세트를 받았어요!',
+  testimonial13: '게임이 생각보다 중독성 있어요. 매일 조금씩 기록이 줄어드는 게 눈에 보여서 재밌었어요.',
+  testimonial14: '일본에서 참가했는데, BTS 앨범이랑 포스터 세트를 받았어요. StanBeat 리그 1위로 받았다는 게 자랑!',
+  testimonial15: '친구가 알려줘서 시작했는데, 2주 만에 리그 1위 먹었어요. 운이 좋았나 봐요 😊',
+  testimonial16: '전체 1위를 향해 도전 중! 지금은 리그 1위로 굿즈 받았지만 언젠간 항공권도 노려볼 거예요!',
+  testimonial17: '처음에 50초대였는데 결국 32초까지 줄였어요. 집중력이 엄청 좋아졌어요 ㅋㅋ',
+  testimonial18: '프랑스에서 참가해서 리그 1위! BTS 포카 받는 날만 기다리고 있어요.',
+  testimonial19: 'BTS 굿즈 받고 나서 매일 한국어 공부 시작했어요. StanBeat가 제 인생을 바꿨어요!',
+  testimonial20: '20살 생일 선물로 BTS 라이트스틱을 받은 기분! Best birthday ever 🎂🎁',
+  testimonial21: '인도네시아에서 리그 1위! 현지 ARMY들이 응원해줘서 더 감동이었어요 💜',
+  testimonial22: '31초대 기록 세우고 바로 리그 1위 됐어요. 손이 떨렸어요. 진짜 실화입니다.',
+  testimonial23: '전체 1위는 서울행 항공권이라니... 지금 열심히 연습 중! 일단 리그 1위 굿즈부터!',
+  testimonial24: 'BTS 공식 머치 받았는데 퀄리티가 진짜 대박... StanBeat 감사합니다!',
+  testimonial25: '멕시코에서 리그 1위! BTS 포토카드 풀세트가 도착했어요. 꿈이 현실이 됐습니다.',
+  testimonial26: '처음엔 못 믿었는데, 굿즈 택배 받고 소리 질렀어요!! 가족들도 깜짝 놀랐어요.',
+  testimonial27: '매일 출퇴근길에 StanBeat 했어요. 결국 리그 1위! 지하철에서 환호했습니다 ㅋㅋ',
+  testimonial28: 'BTS 앨범이랑 포스터 세트 받았어요. 방 꾸미기 완료! 인생 버킷리스트 하나 달성!',
+  testimonial29: '영국에서 참가했는데, 시차 때문에 새벽에 플레이했어요. 그래도 리그 1위! Worth it 🇬🇧',
+  testimonial30: '이런 기회가 또 올까 싶어서 더 열심히 했어요. 그리고 진짜 됐습니다. 감사합니다!',
+  testimonial31: '태국 ARMY인데, BTS 굿즈 받고 인스타 도배했어요 😂 팔로워가 2배로 늘었어요!',
+  testimonial32: '35초대 기록! 리그 1위 했어요. 전체 1위도 노려봐야지 ✨',
 };
+
 
 export type MessageKey = keyof typeof baseMessages;

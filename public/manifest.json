@@ -1,0 +1,29 @@
+{
+    "name": "StanBeat - Find BTS, Fly to Korea",
+    "short_name": "StanBeat",
+    "description": "Find BTS member names in the fastest time. Win a trip to Seoul!",
+    "start_url": "/",
+    "display": "standalone",
+    "orientation": "portrait",
+    "background_color": "#000000",
+    "theme_color": "#FF0080",
+    "lang": "en",
+    "categories": [
+        "games",
+        "entertainment"
+    ],
+    "icons": [
+        {
+            "src": "/icons/icon-512.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        },
+        {
+            "src": "/icons/icon-512.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "maskable"
+        }
+    ]
+}

@@ -1,5 +1,10 @@
 import { LanguageCode } from './i18n';
 
+export interface GameRecord {
+  time: number;
+  date: string;
+}
+
 export interface User {
   id: string;
   nickname: string;
@@ -13,6 +18,9 @@ export interface User {
   lastDailyHeart: string | null;
   agreedToTerms: boolean;
   banned: boolean;
+  gameHistory: GameRecord[];
+  referralCode: string;
+  referredBy: string | null;
 }
 
 export interface GridCell {
@@ -29,7 +37,7 @@ export interface WordConfig {
   found: boolean;
 }
 
-export type ViewState = 'HOME' | 'GAME' | 'LEADERBOARD' | 'ADMIN';
+export type ViewState = 'HOME' | 'GAME' | 'LEADERBOARD' | 'ADMIN' | 'HISTORY';
 
 export interface LeaderboardEntry {
   id: string;
@@ -38,9 +46,12 @@ export interface LeaderboardEntry {
   avatarUrl: string;
   time: number;
   rank: number;
+  email?: string;
+  hearts?: number;
   isCurrentUser?: boolean;
   isBot?: boolean;
   banned?: boolean;
+  leagueLabel?: string; // Random hex label for guest showcase
 }
 
 export interface Language {
@@ -54,3 +65,6 @@ export interface ActivityItem {
   message: string;
   level?: 'live' | 'alert' | 'event';
 }
+
+// Re-export LeagueData so it can be imported from either file
+export type { LeagueData } from './league';

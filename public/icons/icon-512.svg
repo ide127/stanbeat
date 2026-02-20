@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0A0015"/>
+      <stop offset="50%" style="stop-color:#1A0B2E"/>
+      <stop offset="100%" style="stop-color:#0A0015"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="cyanGlow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="80" fill="url(#bg)"/>
+  <!-- Heart with glow -->
+  <g filter="url(#glow)" transform="translate(256, 210)">
+    <path d="M0 45 C0 45, -90 -30, -90 -60 C-90 -100, -40 -110, 0 -70 C40 -110, 90 -100, 90 -60 C90 -30, 0 45, 0 45Z"
+          fill="#FF0080" opacity="0.95"/>
+  </g>
+  <!-- Beat line -->
+  <g filter="url(#cyanGlow)">
+    <polyline points="130,340 190,340 210,310 230,370 250,300 270,360 290,330 310,350 330,340 380,340"
+              fill="none" stroke="#00FFFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- SB text -->
+  <text x="256" y="430" font-family="'Oswald', 'Arial Black', sans-serif" font-size="48" font-weight="700"
+        fill="#FFFFFF" text-anchor="middle" opacity="0.8">STANBEAT</text>
+</svg>
