@@ -127,5 +127,8 @@
   "tickerLeague": " League #{league}: {name} alcançou o #1 com {time}s!",
   "prizeBanner": "🎁 Por ordem de chegada! Participe do Evento de Produtos Especiais do BTS 👉",
   "adBannerCTA": "Assista ao anúncio para ganhar corações",
-  "resultCtaText": "Ver detalhes do evento"
+  "resultCtaText": "Ver detalhes do evento",
+  "Target": "",
+  "tickerNoticePrefix": "",
+  "00": ""
 }

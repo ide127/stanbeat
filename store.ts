@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { ActivityItem, GameRecord, LeaderboardEntry, User, ViewState } from './types';
 import { LanguageCode } from './i18n';
-import { isFirebaseEnabled, firebaseSignInWithGoogle, firebaseSignOut, saveUserProfile, saveScore } from './firebase';
+import { isFirebaseEnabled, firebaseSignInWithGoogle, firebaseSignOut, saveUserProfile, saveScore, deleteAllScores, banUserInFirestore as banUserInFs, incrementGlobalStats, getGlobalStats, getAdminGlobalUsers, editUserHeartInFirestore } from './firebase';
 import { listenForRewards, claimRewardInFirestore, getOfferwallUrl, getRewardedVideoUrl } from './adscend';
 import { type LeagueData, generateLeague, refreshLeagueIfNeeded, getGapToFirst, getRefreshCountdown, generateGuestShowcase, generateViewOnlyLeague, getMsUntilNextUtcMidnight } from './league';
 
@@ -43,6 +43,8 @@ interface AppState {
   videoWatchCount: number; // 현재 세션 리워드 비디오 시청 횟수
   rewardListenerUnsubscribe: (() => void) | null;
   league: LeagueData | null;
+  adminUsers: Record<string, any>[];
+  adminStats: { totalHeartsUsed: number, adRevenue: number };
 
   setView: (view: ViewState) => void;
   toggleMenu: () => void;
@@ -72,6 +74,7 @@ interface AppState {
 
   // Admin
   toggleAdminRole: () => void;
+  fetchAdminData: () => Promise<void>;
 
   // Ad system
   setAdConfig: (config: Partial<AdConfig>) => void;
@@ -233,6 +236,8 @@ export const useStore = create<AppState>((set, get) => ({
   videoWatchCount: 0,
   rewardListenerUnsubscribe: null,
   league: safeStorage.get<LeagueData | null>('stanbeat_league', null),
+  adminUsers: [],
+  adminStats: { totalHeartsUsed: 0, adRevenue: 0 },
 
   setView: (view) => set({ currentView: view }),
   toggleMenu: () => set((state) => ({ isMenuOpen: !state.isMenuOpen })),
@@ -373,12 +378,21 @@ export const useStore = create<AppState>((set, get) => ({
   consumeHeart: () => {
     const user = get().currentUser;
     if (!user || user.banned) return false;
+    // Admin bypass: always allow playing without consuming a heart
+    if (user.role === 'ADMIN') return true;
+
     const normalized = normalizeHearts(user);
     if (normalized.hearts <= 0) {
       set({ currentUser: normalized });
       safeStorage.set('stanbeat_user', normalized);
       return false;
     }
+
+    // Heart consumed (for normal users)
+    if (isFirebaseEnabled) {
+      incrementGlobalStats(1, 0); // Increment global hearts used by 1
+    }
+
     const updatedUser = { ...normalized, hearts: normalized.hearts - 1 };
     const newHeartsUsed = get().heartsUsedToday + 1;
     safeStorage.set('stanbeat_user', updatedUser);
@@ -396,7 +410,14 @@ export const useStore = create<AppState>((set, get) => ({
       hearts: Math.min(normalized.hearts + amount, 3),
       expiresAt: Date.now() + THREE_HOURS,
     };
-    const newRevenue = get().adRevenue + 0.15;
+
+    // Track globally (approximation of ad revenue triggered by heart addition logic)
+    const revDelta = amount > 0 ? 0.35 : 0;
+    if (isFirebaseEnabled && revDelta > 0) {
+      incrementGlobalStats(0, revDelta);
+    }
+
+    const newRevenue = get().adRevenue + revDelta;
     safeStorage.set('stanbeat_user', updatedUser);
     safeStorage.set('stanbeat_ad_revenue', newRevenue);
     set({ adRevenue: newRevenue, currentUser: updatedUser });
@@ -541,6 +562,10 @@ export const useStore = create<AppState>((set, get) => ({
   resetSeason: () => {
     const newEndTime = Date.now() + getMsUntilNextUtcMidnight();
     safeStorage.set('stanbeat_leaderboard', mockLeaderboardBase);
+
+    if (isFirebaseEnabled) {
+      deleteAllScores(); // Wipe out Firestore scores collection to implement true reset
+    }
     safeStorage.set('stanbeat_season_ends', newEndTime);
     safeStorage.set('stanbeat_hearts_used', 0);
     set({
@@ -564,6 +589,18 @@ export const useStore = create<AppState>((set, get) => ({
       };
     });
 
+    if (isFirebaseEnabled) {
+      // Actually populate the real global leaderboard for load testing / fake activity
+      bots.forEach((bot) => {
+        saveScore(bot.id, {
+          nickname: bot.nickname,
+          country: bot.country,
+          avatarUrl: bot.avatarUrl,
+          time: bot.time,
+        }).catch(console.error);
+      });
+    }
+
     const combined = [...get().leaderboard, ...bots]
       .sort((a, b) => a.time - b.time)
       .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
@@ -573,23 +610,42 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   banUser: (id) => {
+    if (isFirebaseEnabled) {
+      banUserInFs(id);
+    }
     const combined = get().leaderboard.map((entry) => (entry.id === id ? { ...entry, banned: true } : entry));
+
+    // Update admin users list as well
+    const updatedAdminUsers = get().adminUsers.map(user =>
+      user.id === id ? { ...user, banned: true } : user
+    );
+
     safeStorage.set('stanbeat_leaderboard', combined);
-    set({ leaderboard: combined });
+    set({ leaderboard: combined, adminUsers: updatedAdminUsers });
   },
 
   editUserHeart: (id, hearts) => {
+    if (isFirebaseEnabled) {
+      editUserHeartInFirestore(id, hearts);
+    }
+
     const user = get().currentUser;
     if (user && user.id === id) {
       const updatedUser = { ...user, hearts: Math.max(0, Math.min(3, hearts)), expiresAt: Date.now() + THREE_HOURS };
       safeStorage.set('stanbeat_user', updatedUser);
       set({ currentUser: updatedUser });
     }
+
     const combined = get().leaderboard.map((entry) =>
       entry.id === id ? { ...entry, hearts: Math.max(0, Math.min(3, hearts)) } : entry
     );
+
+    const updatedAdminUsers = get().adminUsers.map(user =>
+      user.id === id ? { ...user, hearts: Math.max(0, Math.min(3, hearts)) } : user
+    );
+
     safeStorage.set('stanbeat_leaderboard', combined);
-    set({ leaderboard: combined });
+    set({ leaderboard: combined, adminUsers: updatedAdminUsers });
   },
 
   getReferralLink: () => {
@@ -603,9 +659,32 @@ export const useStore = create<AppState>((set, get) => ({
     if (!user) return;
     const nextRole = user.role === 'ADMIN' ? 'USER' : 'ADMIN';
     const updatedUser = { ...user, role: nextRole as 'USER' | 'ADMIN' };
+
+    if (isFirebaseEnabled) {
+      saveUserProfile(user.id, { role: updatedUser.role }).catch(console.error);
+    }
+
     safeStorage.set('stanbeat_user', updatedUser);
     set({ currentUser: updatedUser });
     console.log(`[Admin] Role toggled to: ${nextRole}`);
+  },
+
+  fetchAdminData: async () => {
+    if (!isFirebaseEnabled) return;
+    try {
+      const stats = await getGlobalStats();
+      const users = await getAdminGlobalUsers();
+
+      set({
+        adminStats: {
+          totalHeartsUsed: Number(stats?.totalHeartsUsed || 0),
+          adRevenue: Number(stats?.adRevenue || 0),
+        },
+        adminUsers: users
+      });
+    } catch (e) {
+      console.error('Failed to fetch admin data:', e);
+    }
   },
 
   // ─── Ad System ──────────────────────────────────────────────────

@@ -127,5 +127,8 @@
   "tickerLeague": " League #{league}: {name} capai #1 dalam {time}s!",
   "prizeBanner": "🎁 Siapa cepat dia dapat! Sertai Acara Barangan Khas BTS 👉",
   "adBannerCTA": "Tonton iklan untuk dapatkan hati",
-  "resultCtaText": "Lihat Butiran Acara"
+  "resultCtaText": "Lihat Butiran Acara",
+  "Target": "",
+  "tickerNoticePrefix": "",
+  "00": ""
 }

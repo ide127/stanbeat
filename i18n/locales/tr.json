@@ -127,5 +127,8 @@
   "tickerLeague": " League #{league}: {name} {time}s'de 1. oldu!",
   "prizeBanner": "🎁 İlk gelen alır! BTS Özel Ürünler Etkinliğine Katılın 👉",
   "adBannerCTA": "Kalp almak için reklam izle",
-  "resultCtaText": "Etkinlik Ayrıntılarını Görüntüle"
+  "resultCtaText": "Etkinlik Ayrıntılarını Görüntüle",
+  "Target": "",
+  "tickerNoticePrefix": "",
+  "00": ""
 }

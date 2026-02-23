@@ -43,6 +43,7 @@ import {
     limit,
     getDocs,
     serverTimestamp,
+    increment,
 } from 'firebase/firestore';
 
 // ─── Firebase 설정 객체 ──────────────────────────────────────────────────────
@@ -170,6 +171,82 @@ export async function getTopScores(count: number = 100): Promise<Array<Record<st
     const snap = await getDocs(q); // 쿼리 실행
     // 각 문서의 id와 데이터를 합쳐서 배열로 반환
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// ─── Firestore: 모든 점수 초기화 (Admin) ──────────────────────────────
+// 관리자가 시즌 리셋 시 전체 리더보드 데이터를 삭제하기 위해 사용
+export async function deleteAllScores(): Promise<void> {
+    if (!db) return;
+    return import('firebase/firestore').then(async ({ deleteDoc }) => {
+        // leaderboard 컬렉션의 모든 문서 조회
+        const snap = await getDocs(collection(db!, 'leaderboard'));
+        // 모든 문서 삭제 실행
+        const deletePromises = snap.docs.map(d => deleteDoc(d.ref));
+        await Promise.all(deletePromises);
+    }).catch(console.error);
+}
+
+// ─── Firestore: 사용자 밴 처리 (Admin) ────────────────────────────────
+// 관리자가 불량 유저 등을 밴 처리할 때 사용. users 컬렉션 및 leaderboard 컬렉션에 밴 속성 추가
+export async function banUserInFirestore(userId: string): Promise<void> {
+    if (!db) return;
+    try {
+        await setDoc(doc(db, 'users', userId), { banned: true, updatedAt: serverTimestamp() }, { merge: true });
+        await setDoc(doc(db, 'leaderboard', userId), { banned: true, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (err) {
+        console.error('[Firebase] Failed to ban user:', err);
+    }
+}
+
+// ─── Firestore: 글로벌 통계(DAU, Revenue 등) 증가 ─────────────────────
+// 전역적으로 관리되는 통계(stats/global) 문서를 업데이트.
+export async function incrementGlobalStats(heartsDelta: number, revenueDelta: number): Promise<void> {
+    if (!db) return;
+    try {
+        await setDoc(doc(db, 'stats', 'global'), {
+            totalHeartsUsed: increment(heartsDelta),
+            adRevenue: increment(revenueDelta),
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+    } catch (err) {
+        console.error('[Firebase] Failed to increment global stats:', err);
+    }
+}
+
+// ─── Firestore: 글로벌 통계 조회 (Admin) ──────────────────────────────
+export async function getGlobalStats(): Promise<Record<string, unknown> | null> {
+    if (!db) return null;
+    try {
+        const snap = await getDoc(doc(db, 'stats', 'global'));
+        return snap.exists() ? snap.data() : { totalHeartsUsed: 0, adRevenue: 0 };
+    } catch (err) {
+        console.error('[Firebase] Failed to fetch global stats:', err);
+        return null;
+    }
+}
+
+// ─── Firestore: 전체 사용자 목록 반환 (Admin) ─────────────────────────
+// 관리자 대시보드용, 모든 users 컬렉션 문서를 반환 (페이지네이션 없이 전부 반환 - DAU 산정용)
+export async function getAdminGlobalUsers(): Promise<Array<Record<string, unknown>>> {
+    if (!db) return [];
+    try {
+        const snap = await getDocs(collection(db, 'users'));
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (err) {
+        console.error('[Firebase] Failed to fetch all users:', err);
+        return [];
+    }
+}
+
+// ─── Firestore: 사용자 하트 수정 저장 (Admin) ─────────────────────────
+export async function editUserHeartInFirestore(userId: string, hearts: number): Promise<void> {
+    if (!db) return;
+    try {
+        await setDoc(doc(db, 'users', userId), { hearts, updatedAt: serverTimestamp() }, { merge: true });
+        await setDoc(doc(db, 'leaderboard', userId), { hearts, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (err) {
+        console.error('[Firebase] Failed to update user hearts:', err);
+    }
 }
 
 // ─── 내부 인스턴스 재내보내기 ───────────────────────────────────────────

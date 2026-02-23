@@ -127,5 +127,8 @@
   "tickerLeague": " League #{league}: {name} đạt hạng 1 với {time}giây!",
   "prizeBanner": "🎁 Đến trước phục vụ trước! Tham gia Sự kiện Hàng hóa Đặc biệt BTS 👉",
   "adBannerCTA": "Xem quảng cáo để nhận tim",
-  "resultCtaText": "Xem chi tiết sự kiện"
+  "resultCtaText": "Xem chi tiết sự kiện",
+  "Target": "",
+  "tickerNoticePrefix": "",
+  "00": ""
 }

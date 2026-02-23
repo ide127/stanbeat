@@ -127,5 +127,8 @@
   "tickerLeague": " League #{league}: {name} 以{time}秒夺得第1名！",
   "prizeBanner": "🎁 先到先得！参与BTS特别周边活动 👉",
   "adBannerCTA": "看广告领爱心",
-  "resultCtaText": "查看活动详情"
+  "resultCtaText": "查看活动详情",
+  "Target": "",
+  "tickerNoticePrefix": "",
+  "00": ""
 }

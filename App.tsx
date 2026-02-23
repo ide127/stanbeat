@@ -346,7 +346,10 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         <div className="bg-[#FF0080]/20 border border-[#FF0080] rounded-full px-3 py-1 text-[#FF0080] font-mono font-bold">{formatTime(elapsed)}</div>
         <div className="flex items-center gap-2">
           {isAdmin && (
-            <button onClick={() => setShowDevPanel((v) => !v)} className="text-[10px] text-yellow-400/70 border border-yellow-400/30 rounded px-2 py-0.5 btn-squishy">DEV</button>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[#FF0080] font-bold border border-[#FF0080] rounded px-2 py-0.5 bg-[#FF0080]/20">GOD MODE</span>
+              <button onClick={() => setShowDevPanel((v) => !v)} className="text-[10px] text-yellow-400/70 border border-yellow-400/30 rounded px-2 py-0.5 btn-squishy">DEV</button>
+            </div>
           )}
           <button onClick={() => { vibrate(); setView('HOME'); }} className="text-white/70 hover:text-white btn-squishy">{t(language, 'exitGame')}</button>
         </div>
@@ -803,31 +806,51 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 // 통계 확인, 강제 데이터 초기화, 가짜 봇 생성, 공지사항 작성 등의 운영 기능을 담당합니다.
 const AdminScreen = () => {
   const {
-    setView, leaderboard, heartsUsedToday, adRevenue, notice, setNotice,
+    setView, leaderboard, notice, setNotice,
     resetSeason, generateDummyBots, banUser, currentUser, editUserHeart,
     showNoticePopup, setShowNoticePopup, language,
+    adminStats, adminUsers, fetchAdminData,
   } = useStore();
+
+  useEffect(() => {
+    fetchAdminData();
+  }, []);
 
   const [noticeDraft, setNoticeDraft] = useState(notice);
   const [heartDraft, setHeartDraft] = useState(3);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const riskWarning = leaderboard.some((entry) => entry.time <= 1000);
-  const dau = leaderboard.filter((entry) => !entry.banned).length;
+
+  // DAU Calculation: count users who logged in/updated today
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dau = adminUsers.length > 0
+    ? adminUsers.filter(u => {
+      if (u.banned) return false;
+      if (!u.updatedAt) return false;
+      try {
+        const d = u.updatedAt.toDate ? u.updatedAt.toDate() : new Date(u.updatedAt);
+        return d.toISOString().slice(0, 10) === todayStr;
+      } catch { return false; }
+    }).length
+    : leaderboard.filter((entry) => !entry.banned).length;
 
   return (
     <div className="flex-1 p-4 overflow-y-auto space-y-4">
       <div className="flex items-center justify-between">
         <button onClick={() => { vibrate(); setView('HOME'); }} className="text-white/70 btn-squishy"><ArrowLeft /></button>
-        <h2 className="text-white font-black text-xl">{t(language, 'adminTitle')}</h2>
+        <div className="flex items-center gap-2 flex-col">
+          <h2 className="text-white font-black text-xl">{t(language, 'adminTitle')}</h2>
+          <span className="text-[10px] bg-[#FF0080]/20 text-[#FF0080] border border-[#FF0080] px-3 py-0.5 rounded-full font-bold shadow-[0_0_10px_rgba(255,0,128,0.3)] tracking-widest">👑 GOD MODE ACTIVE</span>
+        </div>
         <div className="w-5" />
       </div>
 
       {/* Metrics */}
       <div className="grid grid-cols-2 gap-3">
         <MetricCard label="DAU" value={String(dau)} icon={<Users />} color="text-[#00FFFF]" />
-        <MetricCard label="Ad Revenue" value={`$${adRevenue.toFixed(2)}`} icon={<DollarSign />} color="text-green-400" />
-        <MetricCard label="Total Hearts Used" value={String(heartsUsedToday)} icon={<Play />} color="text-[#FF0080]" />
+        <MetricCard label="Ad Revenue" value={`$${(adminStats?.adRevenue || 0).toFixed(2)}`} icon={<DollarSign />} color="text-green-400" />
+        <MetricCard label="Global Hearts" value={String(adminStats?.totalHeartsUsed || 0)} icon={<Play />} color="text-[#FF0080]" />
         <MetricCard label="Risk Meter" value={riskWarning ? 'Warning' : 'Normal'} icon={<ShieldAlert />} color={riskWarning ? 'text-red-400' : 'text-[#00FFFF]'} />
       </div>
 
@@ -856,23 +879,24 @@ const AdminScreen = () => {
 
       {/* User Management */}
       <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-2">
-        <p className="text-white font-semibold mb-2">{t(language, 'userManagement')}</p>
-        {leaderboard.filter((entry) => !entry.banned).slice(0, 10).map((entry) => (
+        <p className="text-white font-semibold mb-2">{t(language, 'userManagement')} (Total: {adminUsers.length})</p>
+        {(adminUsers.length > 0 ? adminUsers : leaderboard).filter((entry) => !entry.banned).slice(0, 20).map((entry) => (
           <div key={entry.id} className={`flex items-center justify-between bg-black/20 p-2 rounded ${selectedUserId === entry.id ? 'ring-1 ring-[#00FFFF]' : ''}`}>
-            <div className="flex items-center gap-2 flex-1 min-w-0" onClick={() => setSelectedUserId(entry.id === selectedUserId ? null : entry.id)}>
-              <img src={entry.avatarUrl} className="w-8 h-8 rounded-full flex-shrink-0" />
+            <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer" onClick={() => setSelectedUserId(entry.id === selectedUserId ? null : entry.id)}>
+              <img src={entry.avatarUrl || `https://picsum.photos/seed/${entry.id}/80/80`} className="w-8 h-8 rounded-full flex-shrink-0" />
               <div className="min-w-0">
-                <p className="text-white text-sm truncate">{entry.nickname}</p>
+                <p className="text-white text-sm truncate">{entry.nickname || 'Unknown User'}</p>
                 <div className="flex items-center gap-2 text-white/50 text-[10px]">
-                  <span>{getCountryFlag(entry.country)}</span>
-                  <span>{formatTime(entry.time)}</span>
+                  <span>{getCountryFlag(entry.country || 'ZZ')}</span>
+                  {entry.time && <span>{formatTime(entry.time)}</span>}
                   {entry.hearts !== undefined && <span>❤️{entry.hearts}</span>}
                   {entry.email && <span className="truncate">{entry.email}</span>}
+                  <span className="text-yellow-500">{entry.role === 'ADMIN' ? '[ADMIN]' : ''}</span>
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
-              {!entry.isCurrentUser && (
+              {currentUser?.id !== entry.id && (
                 <button onClick={() => { vibrate(); banUser(entry.id); }} className="bg-red-500 text-white text-xs px-2 py-1 rounded btn-squishy">BAN</button>
               )}
             </div>

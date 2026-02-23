@@ -127,5 +127,8 @@
   "tickerLeague": " League #{league}で{name}さんが{time}秒で1位達成！",
   "prizeBanner": "🎁 先着順！BTSスペシャルグッズイベントに参加 👉",
   "adBannerCTA": "広告を見てハートをゲット",
-  "resultCtaText": "イベント詳細を見る"
+  "resultCtaText": "イベント詳細を見る",
+  "Target": "",
+  "tickerNoticePrefix": "",
+  "00": ""
 }

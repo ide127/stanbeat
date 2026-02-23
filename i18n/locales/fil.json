@@ -127,5 +127,8 @@
   "tickerLeague": " League #{league}: Naabot ni {name} ang #1 sa {time}s!",
   "prizeBanner": "🎁 First come, first served! Join the BTS Special Goods Event 👉",
   "adBannerCTA": "Watch ad to get hearts",
-  "resultCtaText": "View Event Details"
+  "resultCtaText": "View Event Details",
+  "tickerNoticePrefix": "[ABISO]",
+  "Target": "",
+  "00": ""
 }
