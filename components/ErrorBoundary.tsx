@@ -12,9 +12,8 @@ interface ErrorBoundaryState {
 }
 
 /**
- * Global React Error Boundary.
- * Catches unhandled rendering errors and displays a recovery UI
- * instead of a blank white screen.
+ * Global React Error Boundary. (글로벌 리액트 에러 경계 컴포넌트)
+ * 앱 전체에서 발생하는 렌더링 에러를 포착하여 빈 화면 대신 복구 UI를 표시합니다.
  */
 class ErrorBoundaryClass extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
     constructor(props: ErrorBoundaryProps) {
@@ -28,25 +27,29 @@ class ErrorBoundaryClass extends React.Component<ErrorBoundaryProps, ErrorBounda
         this.handleReset = this.handleReset.bind(this);
     }
 
+    // 에러 발생 시 fallback UI 표시를 위한 상태 업데이트 함수
     static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
         return { hasError: true, error };
     }
 
+    // 에러 발생 시 호출되는 생명주기 메서드 (에러 로깅용)
     componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-        console.error('[ErrorBoundary] Uncaught error:', error);
-        console.error('[ErrorBoundary] Component stack:', errorInfo.componentStack);
+        console.error('[ErrorBoundary] 처리되지 않은 에러 발생:', error);
+        console.error('[ErrorBoundary] 컴포넌트 스택:', errorInfo.componentStack);
         this.setState({ errorInfo });
     }
 
+    // 페이지 새로고침 핸들러
     handleReload(): void {
         window.location.reload();
     }
 
+    // 로컬스토리지 전체 초기화 후 새로고침 (치명적 에러 해결용)
     handleReset(): void {
         try {
             localStorage.clear();
         } catch {
-            // localStorage may be unavailable
+            // localStorage 접근 불가 시 무시
         }
         window.location.reload();
     }

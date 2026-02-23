@@ -67,7 +67,6 @@
   "chargeHearts": "💖 Charge Hearts",
   "rankingBoardTitle": "🏆 Ranking Board",
   "leagueInfo": "League #{leagueNum} · {players} players · {totalLeagues} leagues active",
-  "leagueSyncNotice": "Rankings sync every 30 minutes",
   "almostFirst": "Just {gap} more to reach #1! 🔥",
   "nextSync": "Next sync: {time}",
   "guestLeagueTitle": "🏆 Live League #1 Rankings",
@@ -114,5 +113,19 @@
   "testimonial29": "Joined from the UK — played at dawn due to time zones. Still got league #1! Worth it 🇬🇧",
   "testimonial30": "Thought an opportunity like this might never come again, so I tried even harder. And it worked. Thank you!",
   "testimonial31": "Thai ARMY here — flooded my Instagram with BTS merch photos 😂 My followers doubled!",
-  "testimonial32": "35-second record! Got league #1. Gotta aim for overall #1 next ✨"
+  "testimonial32": "35-second record! Got league #1. Gotta aim for overall #1 next ✨",
+  "prizeOverallBanner": "✈️ Overall #1 → Round-trip flight to Seoul",
+  "minutesUnit": "m",
+  "tickerEvent": "Invite friends & get +1 instantly!",
+  "leagueSyncNotice": "Rankings sync every 10 minutes",
+  "resultAppealText": " Overall #1: Round-trip flight to Seoul  Challenge now!",
+  "prizeLeagueBanner": "🎁 League #1  Official BTS Merch  Resets midnight",
+  "resultCtaUrl": "stanbeat.pages.dev",
+  "hoursUnit": "h",
+  "leagueSyncLabel": "Next ranking update:",
+  "secondsUnit": "s",
+  "tickerLeague": " League #{league}: {name} reached #1 with {time}s!",
+  "prizeBanner": "🎁 First come, first served! Join the BTS Special Goods Event 👉",
+  "adBannerCTA": "Watch ad to get hearts",
+  "resultCtaText": "View Event Details"
 }

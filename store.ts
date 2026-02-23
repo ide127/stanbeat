@@ -89,22 +89,47 @@ const THREE_HOURS = 3 * 60 * 60 * 1000;
 
 const todayUtc = () => new Date().toISOString().slice(0, 10);
 
+// 로컬 스토리지에 데이터를 안전하게 읽고 쓰기 위한 유틸리티 객체
 const safeStorage = {
+  // 제네릭 타입 T를 사용해 읽어올 데이터타입을 지정하고, 실패 시 반환할 fallback(기본값) 설정
   get: <T>(key: string, fallback: T): T => {
     try {
+      // 로컬 스토리지에서 해당 key로 저장된 문자열 값을 가져옴
       const value = localStorage.getItem(key);
+      // 값이 존재하면 JSON 파싱 후 T 타입으로 캐스팅해 반환, 없으면 기본값(fallback) 반환
       return value ? (JSON.parse(value) as T) : fallback;
     } catch {
+      // 파싱 에러 등 예외 발생 시 안전하게 기본값 반환 방어 코드
       return fallback;
     }
   },
-  set: (key: string, value: unknown) => {
+  // 제네릭 타입 T를 가지는 값을 특정 key로 로컬 스토리지에 저장
+  set: <T>(key: string, value: T): void => {
     try {
+      // 객체 등의 구조화된 데이터를 JSON 문자열로 직렬화하여 스토리지에 저장
       localStorage.setItem(key, JSON.stringify(value));
     } catch {
+      // 브라우저 저장소 용량 초과나 보안 설정 등으로 인한 예외 무시
       // no-op
     }
   },
+};
+
+export const detectLanguageFromIP = async (): Promise<LanguageCode | null> => {
+  try {
+    const res = await fetch('https://ipapi.co/json/');
+    const data = await res.json();
+    const countryCode: string = data.country_code;
+    const map: Record<string, LanguageCode> = {
+      KR: 'ko', JP: 'ja', CN: 'zh-CN', TH: 'th', ID: 'id',
+      VN: 'vi', PH: 'en', US: 'en', GB: 'en', AU: 'en',
+      FR: 'fr', DE: 'de', ES: 'es', BR: 'pt-BR', IN: 'hi',
+      TR: 'tr', AR: 'ar', SA: 'ar',
+    };
+    return map[countryCode] ?? null;
+  } catch {
+    return null;
+  }
 };
 
 const generateNickname = () => {
@@ -118,11 +143,17 @@ const generateReferralCode = () => {
   return Math.random().toString(36).substring(2, 10);
 };
 
+// 유저 객체의 하트 만료 시간을 체크하여, 만료되었다면 하트를 0으로 초기화해 반환하는 상태 정규화 함수
 const normalizeHearts = (user: User) => {
+  // 만약 하트 만료 시간(expiresAt)이 설정되지 않은 유저라면 무한 하트이거나 초기화 상태이므로 그대로 반환
   if (!user.expiresAt) return user;
+
+  // 현재 시간이 유저의 하트 만료 시간을 넘어섰는지 검사
   if (Date.now() > user.expiresAt) {
+    // 만료 시간을 넘어섰다면, 보유 하트 수를 0으로 만들고 만료 시간은 null로 리셋한 새 유저 객체 반환
     return { ...user, hearts: 0, expiresAt: null };
   }
+  // 만료 기간이 아직 남았다면 상태를 변경하지 않고 기존 유저 객체를 반환
   return user;
 };
 
@@ -141,9 +172,13 @@ const TICKER_NICKNAMES = [
   'SeokjinLover', 'YoongiFire', 'NamjoonWise', 'BTSForever', 'ARMYPower',
   'SpringDay', 'MikrokosmosFan', 'BangtanSoul', 'DaydreamArmy', 'EuphoriaGirl',
 ];
+// 동적 알림(Ticker)용 가상의 닉네임 생성기 (BTS 팬덤 감성이 담긴 프리셋 단어 사용)
 const generateTickerNickname = () => {
+  // 미리 정의된 TICKER_NICKNAMES 배열에서 무작위로 하나의 닉네임을 선택
   const name = TICKER_NICKNAMES[Math.floor(Math.random() * TICKER_NICKNAMES.length)];
+  // 실제 유저처럼 보이기 위해 1000에서 9999 사이의 4자리 무작위 숫자를 생성
   const num = Math.floor(Math.random() * 9000) + 1000;
+  // 단어와 숫자를 언더바(_)로 연결하여 최종 닉네임 문자열 반환 (예: ShinyCookie_4512)
   return `${name}_${num}`;
 };
 const generateTickerTime = () => (28 + Math.random() * 14).toFixed(1); // 28.0 ~ 42.0s
@@ -175,7 +210,7 @@ const generateDynamicFeed = (): ActivityItem[] => {
 const defaultFeed: ActivityItem[] = generateDynamicFeed();
 
 const savedLang = safeStorage.get<LanguageCode>('stanbeat_lang', 'ko');
-const savedNotice = safeStorage.get<string>('stanbeat_notice', '당첨자 발표 지연 시 앱 공지로 안내됩니다.');
+const savedNotice = safeStorage.get<string>('stanbeat_notice', '');
 const savedLeaderboard = safeStorage.get<LeaderboardEntry[]>('stanbeat_leaderboard', mockLeaderboardBase);
 const savedUser = safeStorage.get<User | null>('stanbeat_user', null);
 const savedShowNotice = safeStorage.get<boolean>('stanbeat_show_notice', false);
@@ -226,38 +261,49 @@ export const useStore = create<AppState>((set, get) => ({
     set({ currentUser: nextUser, termsAccepted: true });
   },
 
-  // ─── Auth ─────────────────────────────────────────────────────
+  // ─── 인증 (Auth) 로직 ─────────────────────────────────────────────────────
+  // 구글 로그인을 처리하고 유저 데이터를 초기화하거나 기존 데이터를 불러오는 함수
   login: async () => {
+    // 현재 접속한 브라우저의 URL에 있는 쿼리(query) 파라미터들을 파싱합니다.
     const urlParams = new URLSearchParams(window.location.search);
+    // 쿼리 파라미터 중 추천인 코드('ref')가 있는지 확인하여 가져옵니다.
     const refCode = urlParams.get('ref');
 
+    // 파이어베이스(연동) 기능이 활성화되어 환경변수로 로드된 경우만 로그인 시도
     if (isFirebaseEnabled) {
-      // Real Firebase Google Login
       try {
+        // 파이어베이스에서 제공하는 구글 팝업 로그인을 실행하여 결과를 받아옵니다.
         const fbUser = await firebaseSignInWithGoogle();
+        // 로그인 결과가 없다면(팝업 닫힘 등) 에러를 발생시켜 catch 블록으로 넘깁니다.
         if (!fbUser) throw new Error('Google sign-in returned no user');
 
+        // 새로 로그인한 사용자의 초기 데이터 구조를 생성합니다.
         const user: User = {
-          id: fbUser.uid,
-          nickname: fbUser.displayName || generateNickname(),
+          id: fbUser.uid, // 파이어베이스에서 부여한 고유 UID 
+          // 구글 프로필 이름 대신 임의의 닉네임을 생성하여 익명성을 보장합니다.
+          nickname: generateNickname(),
+          // 구글 프로필 사진이 있으면 쓰고, 없으면 시드값을 이용해 랜덤 아바타 이미지를 생성
           avatarUrl: fbUser.photoURL || `https://picsum.photos/seed/${AVATAR_SEED}${Date.now()}/100/100`,
-          email: fbUser.email || '',
-          hearts: 3,
-          bestTime: null,
-          country: 'KR',
-          role: 'USER',
+          email: fbUser.email || '', // 구글 이메일 (없을 경우 빈 문자열 부여)
+          hearts: 1, // 신규 가입 시 보너스 개념으로 바로 플레이 가능하도록 하트 1개 지급
+          bestTime: null, // 초기 최고 기록은 없으므로 null로 설정
+          country: 'KR', // 기본 국가 코드는 KR(한국)로 설정 (이후 서비스 로직에 따라 변경 가능)
+          role: 'USER', // 기본 권한 레벨을 일반 사용자로 설정
+          // 지급한 1개의 하트가 3시간 뒤에 만료되도록 만료 시간 계산하여 설정
           expiresAt: Date.now() + THREE_HOURS,
-          lastDailyHeart: null,
-          agreedToTerms: false,
-          banned: false,
-          gameHistory: [],
-          referralCode: generateReferralCode(),
-          referredBy: refCode,
+          lastDailyHeart: null, // 아직 일일 무료 하트를 받은 기록이 없으므로 null
+          agreedToTerms: false, // 최초 로그인 시 약관 동의 절차를 거치지 않았으므로 false 설정
+          banned: false, // 블랙리스트(차단) 상태를 기본값인 false로 설정
+          gameHistory: [], // 모든 플레이 기록을 담을 배열 초기화
+          referralCode: generateReferralCode(), // 나만의 8자리 고유 추천인 코드 발급
+          referredBy: refCode, // URL에 추천인 코드가 있었다면 내 계정에 추천자(referredBy) 등록
         };
 
-        // Merge with existing saved user data (hearts, history, etc.)
+        // 로컬 스토리지에 이전에 저장된 기존 유저 데이터가 있는지 확인
         const existingUser = safeStorage.get<User | null>('stanbeat_user', null);
+        // 만약 기존 데이터가 있고, 그 아이디가 방금 로그인한 아이디와 같다면 재방문 유저로 간주
         if (existingUser && existingUser.id === user.id) {
+          // 기존 유저의 데이터(하트, 기록, 동의 내역 등)를 덮어씌워 보존 처리합니다.
           user.hearts = existingUser.hearts;
           user.bestTime = existingUser.bestTime;
           user.gameHistory = existingUser.gameHistory;
@@ -270,18 +316,20 @@ export const useStore = create<AppState>((set, get) => ({
           user.banned = existingUser.banned;
         }
 
+        // 새롭게 만들어지거나 병합된 유저 데이터를 로컬 스토리지에 저장합니다.
         safeStorage.set('stanbeat_user', user);
+        // 하트 상태 검사(normalizeHearts) 후 Zustand 글로벌 저장소(store) 상태 업데이트
         set({ currentUser: normalizeHearts(user), termsAccepted: user.agreedToTerms });
 
-        // Save to Firestore asynchronously
+        // 파이어베이스(Firestore)에도 유저 프로필 정보를 비동기로 저장/업데이트 요청
         saveUserProfile(user.id, {
           nickname: user.nickname,
           email: user.email,
           avatarUrl: user.avatarUrl,
           country: user.country,
-        }).catch(console.error);
+        }).catch(console.error); // 실패 시 콘솔에 에러만 기록
       } catch (err) {
-        console.error('[Firebase Auth Error]', err);
+        console.error('[Firebase Auth Error]', err); // 파이어베이스 로그인 오류 콘솔 출력
         throw err;
       }
     } else {
@@ -290,10 +338,11 @@ export const useStore = create<AppState>((set, get) => ({
         setTimeout(() => {
           const user: User = {
             id: `user_${Math.floor(Math.random() * 99999)}`,
+            // 무조건 랜덤 닉네임 배정
             nickname: generateNickname(),
             avatarUrl: `https://picsum.photos/seed/${AVATAR_SEED}${Math.floor(Math.random() * 9999)}/100/100`,
             email: 'army@example.com',
-            hearts: 3,
+            hearts: 1, // 신규 가입 시 하트 1개 지급
             bestTime: null,
             country: countries[Math.floor(Math.random() * countries.length)],
             role: 'USER',
@@ -353,6 +402,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ adRevenue: newRevenue, currentUser: updatedUser });
   },
 
+  // ─── 일일 하트 지급 처리 ──────────────────────────────────────────
   claimDailyHeart: () => {
     const user = get().currentUser;
     if (!user || user.banned) return false;
@@ -372,21 +422,30 @@ export const useStore = create<AppState>((set, get) => ({
     return true;
   },
 
+  // ─── 최고 기록 갱신 및 Firestore 저장 ──────────────────────────────
   updateBestTime: (time) => {
     const user = get().currentUser;
     if (!user || user.banned) return;
-    const nextUser = !user.bestTime || time < user.bestTime ? { ...user, bestTime: time } : user;
-    safeStorage.set('stanbeat_user', nextUser);
-    set({ currentUser: nextUser });
 
-    // Save to Firestore leaderboard
-    if (isFirebaseEnabled && nextUser.bestTime) {
-      saveScore(nextUser.id, {
-        nickname: nextUser.nickname,
-        country: nextUser.country,
-        avatarUrl: nextUser.avatarUrl,
-        time: nextUser.bestTime,
-      }).catch(console.error);
+    // 신기록일 경우에만 업데이트 및 리그 재생성 수행
+    if (!user.bestTime || time < user.bestTime) {
+      const nextUser = { ...user, bestTime: time };
+      safeStorage.set('stanbeat_user', nextUser);
+      set({ currentUser: nextUser });
+
+      // 유저의 최고 기록이 바뀌었으므로, 이에 맞춰 봇들의 난이도를 
+      // 재조정(스케일링)하기 위해 리그를 즉시 갱신합니다.
+      get().initLeague();
+
+      // Save to Firestore leaderboard
+      if (isFirebaseEnabled && nextUser.bestTime) {
+        saveScore(nextUser.id, {
+          nickname: nextUser.nickname,
+          country: nextUser.country,
+          avatarUrl: nextUser.avatarUrl,
+          time: nextUser.bestTime,
+        }).catch(console.error);
+      }
     }
   },
 
@@ -399,8 +458,9 @@ export const useStore = create<AppState>((set, get) => ({
     set({ currentUser: nextUser });
   },
 
+  // ─── 리더보드 데이터 호출 및 리그 로딩 ─────────────────────────────
   fetchLeaderboard: () => {
-    // Delegate to league system if user has a best time
+    // 유저 기록이 있으면 리그 시스템에 위임
     const current = get().currentUser;
     if (current?.bestTime) {
       get().initLeague();
@@ -427,6 +487,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ leaderboard: get().leaderboard });
   },
 
+  // ─── 리그 알고리즘 초기화 방아쇠 ──────────────────────────────────
   initLeague: () => {
     const user = get().currentUser;
     if (!user?.bestTime) return;

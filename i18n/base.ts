@@ -53,7 +53,19 @@ export const baseMessages = {
   heartForceGive: '내 하트 강제 지급(테스트)',
   leaguePrize: '🎁 리그 1위 보상: BTS 공식 굿즈',
   overallPrize: '✈️ 전체 1위 보상: 서울행 항공권',
+
   // New keys for previously hardcoded strings
+  hoursUnit: '시간',
+  minutesUnit: '분',
+  secondsUnit: '초',
+  prizeOverallBanner: '✈️ 전체 1위 → 서울행 왕복 항공권',
+  prizeLeagueBanner: '🎁 각 리그 1위 → BTS 공식 굿즈 · 매일 자정 리셋',
+  tickerLeague: '🏆 League #{league}에서 {name}님이 {time}초로 1등을 달성했습니다!',
+  tickerEvent: '[EVENT] 친구 초대 시 +1❤️ 즉시 지급!',
+  tickerNoticePrefix: '[NOTICE]',
+  resultAppealText: '✈️ 전체 1위: 서울행 왕복 항공권',
+  resultCtaText: '지금 참여하세요! → stanbeat.pages.dev',
+
   logout: '로그아웃',
   profile: '프로필',
   clearTime: '클리어 타임',
@@ -93,7 +105,7 @@ export const baseMessages = {
   // League ranking system
   rankingBoardTitle: '🏆 랭킹보드',
   leagueInfo: 'League #{leagueNum} · {players}명 · 총 {totalLeagues}개 리그 진행 중',
-  leagueSyncNotice: '타 유저 기록은 30분마다 동기화됩니다',
+  leagueSyncNotice: '타 유저 기록은 10분마다 동기화됩니다',
   almostFirst: '{gap}만 더 줄이면 1등! 🔥',
   nextSync: '다음 동기화: {time}',
   // Guest leaderboard (not logged in)

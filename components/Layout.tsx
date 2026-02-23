@@ -14,27 +14,32 @@ const randName = () => `${TICKER_NAMES[Math.floor(Math.random() * TICKER_NAMES.l
 const randTime = () => (28 + Math.random() * 14).toFixed(1);
 const randLeague = () => { const L = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'; return `${L[Math.floor(Math.random() * 26)]}${L[Math.floor(Math.random() * 26)]}${Math.floor(Math.random() * 90) + 10}`; };
 
-const buildTickerText = (notice: string) => {
+// 전광판(Ticker)에 표시할 메시지 목록 생성 함수
+const buildTickerText = (notice: string, lang: import('../i18n').LanguageCode) => {
   const msgs: string[] = [];
   for (let i = 0; i < 3; i++) {
-    msgs.push(`🏆 League #${randLeague()}에서 ${randName()}님이 ${randTime()}초로 1등을 달성했습니다!`);
+    msgs.push(t(lang, 'tickerLeague', { league: randLeague(), name: randName(), time: randTime() }));
   }
-  msgs.push('[EVENT] 친구 초대 시 +1❤️ 즉시 지급!');
-  msgs.push(`[NOTICE] ${notice}`);
+  msgs.push(t(lang, 'tickerEvent'));
+  if (notice) msgs.push(`${t(lang, 'tickerNoticePrefix')} ${notice}`);
   return msgs.join('   ✦   ');
 };
 
+// ─── 상단 전광판 컴포넌트 (가짜 1등 달성 메시지 및 공지사항 롤링) ───
 export const Ticker = () => {
-  const { notice } = useStore();
-  const [tickerText, setTickerText] = useState(() => buildTickerText(notice));
+  const { notice, language } = useStore();
+  const [tickerText, setTickerText] = useState(() => buildTickerText(notice, language));
 
   useEffect(() => {
+    // 즉시 업데이트하여 언어 변경 시 전광판이 바로 번역되도록 함
+    setTickerText(buildTickerText(notice, language));
+
     const interval = setInterval(() => {
-      const { notice: n } = useStore.getState();
-      setTickerText(buildTickerText(n));
+      const { notice: n, language: l } = useStore.getState();
+      setTickerText(buildTickerText(n, l));
     }, 20000);
     return () => clearInterval(interval);
-  }, []);
+  }, [notice, language]);
 
   return (
     <div className="bg-black/80 text-[#00FFFF] text-xs py-1 overflow-hidden whitespace-nowrap border-b border-[#1A0B2E] z-40 relative">
@@ -43,6 +48,7 @@ export const Ticker = () => {
   );
 };
 
+// ─── 상단 헤더 컴포넌트 (로고, 햄버거 메뉴, 하트 개수 표시) ───
 export const Header = () => {
   const { currentUser, toggleMenu, setView, toggleAdminRole } = useStore();
   const [pulse, setPulse] = useState(false);
@@ -69,7 +75,7 @@ export const Header = () => {
       toggleAdminRole();
       setAdminFlash(true);
       setTimeout(() => setAdminFlash(false), 600);
-    }, 5000);
+    }, 3000);
   };
 
   const handleLogoPointerUp = () => {
@@ -81,12 +87,14 @@ export const Header = () => {
       <button onClick={() => { vibrate(); toggleMenu(); }} className="text-[#00FFFF] btn-squishy neon-glow-icon">
         <Menu size={24} />
       </button>
+      {/* 5초(현재 3초) 롱프레스 시 관리자 모드(ADMIN) 토글 활성화 */}
       <div
         onClick={() => { vibrate(); setView('HOME'); }}
         onPointerDown={handleLogoPointerDown}
         onPointerUp={handleLogoPointerUp}
         onPointerCancel={handleLogoPointerUp}
         onPointerLeave={handleLogoPointerUp}
+        onContextMenu={(e) => { e.preventDefault(); }}
         className={`font-display text-xl tracking-tighter text-white cursor-pointer hover:scale-105 transition-transform select-none ${adminFlash ? 'animate-pulse' : ''}`}
       >
         <span className={`neon-text ${adminFlash ? 'text-yellow-400' : 'text-[#FF0080]'}`}>STAN</span>BEAT
@@ -102,6 +110,7 @@ export const Header = () => {
   );
 };
 
+// ─── 사이드 메뉴 컴포넌트 (로그인/로그아웃, 홈, 리더보드, 히스토리 등) ───
 export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () => void; onOpenHearts: () => void }) => {
   const { isMenuOpen, toggleMenu, currentUser, logout, login, setView, language, consumeHeart } = useStore();
   if (!isMenuOpen) return null;

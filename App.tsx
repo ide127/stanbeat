@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Clipboard, ClipboardCheck, DollarSign, Play, RefreshCw, Settings, Share2, ShieldAlert, Trash2, ToggleLeft, ToggleRight, Users, Video } from 'lucide-react';
 import { Layout, Modal } from './components/Layout';
 import { languageOptions, t } from './i18n';
-import { useStore, type AdConfig } from './store';
+import { useStore, detectLanguageFromIP, type AdConfig } from './store';
 import { GridCell, WordConfig } from './types';
 import { formatTime, generateGrid, getCountryFlag, getSolutionCells } from './utils';
 import { getCurrentSeasonNumber, generateGuestShowcase } from './league';
@@ -12,6 +12,9 @@ const TARGET_WORDS = ['RM', 'JIN', 'SUGA', 'HOPE', 'JIMIN', 'V', 'JK'];
 const vibrate = () => navigator.vibrate?.(15);
 
 // ─── Home Screen ───────────────────────────────────────────────────
+// ─── 홈 화면 컴포넌트 ─────────────────────────────────────────────
+// 앱을 처음 열었을 때 보이는 메인 화면으로, 현재 시즌/시계 이벤트 정보,
+// 게임 시작 버튼, 그리고 광고/오퍼월을 통해 하트를 얻을 수 있는 UI를 제공합니다.
 const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const { setView, consumeHeart, currentUser, login, language, termsAccepted, acceptTerms, seasonEndsAt, notice, showNoticePopup, setShowNoticePopup } = useStore();
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -102,18 +105,18 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
       {/* Prize urgency banner */}
       <div className="mt-4 rounded-xl border border-[#FFD700]/40 bg-gradient-to-r from-[#FFD700]/10 via-[#FF6B00]/10 to-[#FF0080]/10 p-3 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-[shimmer_3s_linear_infinite]" />
-        <p className="text-[#FFD700] font-black text-base tracking-wide">✈️ 전체 1위 → 서울행 왕복 항공권</p>
-        <p className="text-white/60 text-[11px] mt-0.5">🎁 각 리그 1위 → BTS 공식 굿즈 · 매일 자정 리셋</p>
+        <p className="text-[#FFD700] font-black text-base tracking-wide">{t(language, 'prizeOverallBanner')}</p>
+        <p className="text-white/60 text-[11px] mt-0.5">{t(language, 'prizeLeagueBanner')}</p>
       </div>
 
       <div className="mt-4">
         <p className="text-white/60 text-xs uppercase tracking-widest">{t(language, 'seasonLabel', { seasonNum: String(seasonNum) })}</p>
         <div className="flex items-end justify-center gap-1 mt-1">
-          {remainingParts.h > 0 && <><span className="text-red-400 text-3xl font-black font-mono">{remainingParts.h}</span><span className="text-white/50 text-lg mb-1">시간</span></>}
-          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.m).padStart(2, '0')}</span><span className="text-white/50 text-lg mb-1">분</span>
+          {remainingParts.h > 0 && <><span className="text-red-400 text-3xl font-black font-mono">{remainingParts.h}</span><span className="text-white/50 text-lg mb-1">{t(language, 'hoursUnit')}</span></>}
+          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.m).padStart(2, '0')}</span><span className="text-white/50 text-lg mb-1">{t(language, 'minutesUnit')}</span>
           <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.s).padStart(2, '0')}</span>
           <span className="text-red-400 text-xl font-black font-mono">.{String(remainingParts.ms).padStart(2, '0')}</span>
-          <span className="text-white/50 text-lg mb-1">초</span>
+          <span className="text-white/50 text-lg mb-1">{t(language, 'secondsUnit')}</span>
         </div>
       </div>
 
@@ -200,7 +203,9 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   );
 };
 
-// ─── Game Screen ──────────────────────────────────────────────────
+// ─── 게임 화면 컴포넌트 ─────────────────────────────────────────────
+// 실제 워드서치 게임 플레이 화면. 타이머가 작동하며,
+// 사용자가 그리드에서 단어를 드래그하여 찾는 로직이 포함되어 있습니다.
 const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const { setView, updateBestTime, addGameRecord, language, editUserHeart, currentUser } = useStore();
   const [grid, setGrid] = useState<GridCell[]>([]);
@@ -256,32 +261,84 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     setGrid((prev) => prev.map((cell) => ({ ...cell, found: allFoundIds.has(cell.id) ? true : cell.found })));
   };
 
-  const handlePointerDown = (id: string) => { setStartId(id); setSelectedIds([id]); };
+  // 유저가 처음 그리드의 특정 셀(알파벳)을 터치(또는 클릭)했을 때 호출되는 함수
+  const handlePointerDown = (id: string) => {
+    setStartId(id); // 드래그가 시작된 셀의 고유 ID를 상태에 저장하여 기준점으로 삼음
+    setSelectedIds([id]); // 현재 선택된 셀들의 목록을 나타내는 배열에 첫 셀 ID를 넣고 초기화
+  };
 
-  const handlePointerEnter = (id: string) => {
+  // 유저가 터치(또는 클릭)한 상태로 화면 위를 드래그할 때(마우스를 이동하거나 손가락을 움직일 때) 계속 호출됨
+  const handlePointerMove = (e: React.PointerEvent) => {
+    // 만약 터치 시작점(startId)이 없다면 드래그 중이 아니므로 무시하고 함수 종료
     if (!startId) return;
+
+    // 현재 포인터(마우스/손가락)의 화면 상 실제 X, Y 좌표를 가져와서 그 아래에 있는 DOM 요소를 찾음
+    // 이 방식은 모바일 터치 이벤트에서 손가락이 다른 요소 위로 넘어갔을 때 이벤트를 정확히 잡기 위해 필수적임
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+
+    // 찾은 DOM 요소가 커스텀 데이터 속성인 'data-id' (예: "3-5" 같은 그리드 좌표)를 가지고 있는지 확인
+    const id = el?.getAttribute('data-id');
+
+    // 만약 유효한 그리드 셀 위를 지나가고 있고, 그 셀이 방금 전에 추가된 마지막 셀과 다르다면
+    // (즉, 손가락이 새로운 인접 셀 위로 이동했다면)
+    if (id && id !== selectedIds[selectedIds.length - 1]) {
+      // 해당 셀로 진입(Enter)했다는 로직을 처리하는 함수를 호출
+      handlePointerEnter(id);
+    }
+  };
+
+  // 손가락(포인터)이 새로운 그리드 셀 위로 올라왔을 때 선 연결(선택)을 처리하는 함수
+  const handlePointerEnter = (id: string) => {
+    // 만약 시작 셀이 없다면 잘못된 호출이므로 무시
+    if (!startId) return;
+
+    // 시작 셀의 ID(예: "0-0")를 하이픈(-) 기준으로 잘라 행(r1)과 열(c1) 숫자로 변환
     const [r1, c1] = startId.split('-').map(Number);
+    // 현재 진입한 셀의 ID(예: "2-2")를 잘라 행(r2)과 열(c2) 숫자로 변환
     const [r2, c2] = id.split('-').map(Number);
+
+    // 시작점과 현재 점 사이의 행(row) 및 열(col) 좌표 차이를 계산
     const rowDiff = r2 - r1;
     const colDiff = c2 - c1;
+
+    // 두 점의 행이 같다면 가로로 드래그 중임을 의미
     const sameRow = rowDiff === 0;
+    // 두 점의 열이 같다면 세로로 드래그 중임을 의미
     const sameCol = colDiff === 0;
+    // 두 점의 행 차이값(절댓값)과 열 차이값(절댓값)이 같다면 완벽한 대각선 드래그 중임을 의미
     const diagonal = Math.abs(rowDiff) === Math.abs(colDiff);
+
+    // 만약 가로, 세로, 대각선 중 어느 방향도 아니라면(예: 체스의 나이트 같은 'ㄱ'자 이동)
+    // 올바른 단어 선택 방향이 아니므로 무시하고 함수 종료
     if (!sameRow && !sameCol && !diagonal) return;
+
+    // 시작점부터 현재 지점까지 총 몇 칸(steps) 떨어져 있는지 계산 (행, 열 차이 중 큰 값 기준)
     const steps = Math.max(Math.abs(rowDiff), Math.abs(colDiff));
+
+    // 1칸 이동할 때마다 행(row) 방향으로 더해줄 변화량 선출 (예: 위로 가면 -1, 아래면 1, 가로면 0)
     const rs = rowDiff === 0 ? 0 : rowDiff / Math.abs(rowDiff);
+    // 1칸 이동할 때마다 열(col) 방향으로 더해줄 변화량 선출 (예: 좌로 가면 -1, 우면 1, 세로면 0)
     const cs = colDiff === 0 ? 0 : colDiff / Math.abs(colDiff);
+
+    // 시작점부터 끝점까지의 거리에 따라, 그 사이에 있는 모든 셀들의 ID를 순서대로 계산해 배열로 만듦
+    // 예: "0-0"에서 "0-2"로 간다면 ["0-0", "0-1", "0-2"] 형태의 배열 생성
     const line = Array.from({ length: steps + 1 }, (_, idx) => `${r1 + rs * idx}-${c1 + cs * idx}`);
+
+    // 계산된 직선 경로상의 모든 셀 ID 배열을 현재 '선택된 셀들(selectedIds)' 상태로 업데이트하여 화면 색상 변경
     setSelectedIds(line);
   };
 
+  // 드래그(터치/클릭)를 끝내고 손가락이나 마우스를 뗐을 때 호출되는 함수
   const handlePointerUp = () => {
+    // 만약 1개 이상의 셀이 드래그 선택되어 있다면, 찾은 단어가 정답인지 확인하는 함수(commitSelection) 실행
     if (selectedIds.length) commitSelection(selectedIds);
+    // 검사가 끝났으므로 다음 선택을 위해 선택된 셀 상태 배열 초기화
     setSelectedIds([]);
+    // 시작 기준점도 다음 드래그 시작 시를 위해 null로 리셋
     setStartId(null);
   };
 
-  if (won) return <ResultScreen elapsed={elapsed} onShowHearts={onShowHearts} />;
+  if (won) return <ResultScreen elapsed={elapsed} onShowHearts={onShowHearts} grid={grid} words={words} />;
 
   return (
     <div className="flex-1 p-4" onPointerUp={handlePointerUp}>
@@ -310,12 +367,16 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         </div>
       )}
 
-      <div className="grid grid-cols-10 gap-1 bg-black/40 p-2 rounded-xl border border-white/10 select-none">
+      <div
+        className="grid grid-cols-10 gap-1 bg-black/40 p-2 rounded-xl border border-white/10 select-none touch-none"
+        onPointerMove={handlePointerMove}
+      >
         {grid.map((cell) => {
           const selected = selectedIds.includes(cell.id);
           return (
             <div
               key={cell.id}
+              data-id={cell.id}
               onPointerDown={() => handlePointerDown(cell.id)}
               onPointerEnter={() => handlePointerEnter(cell.id)}
               className={`aspect-square rounded flex items-center justify-center text-xs font-bold transition-colors cursor-pointer ${cell.found ? 'bg-[#00FFFF] text-black' : selected ? 'bg-[#FF0080] text-white' : 'bg-white/5 text-white/80 hover:bg-white/15'
@@ -337,15 +398,18 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   );
 };
 
-// ─── Result Screen ────────────────────────────────────────────────
-const ResultScreen = ({ elapsed, onShowHearts }: { elapsed: number; onShowHearts: () => void }) => {
+// ─── 결과 화면 컴포넌트 ─────────────────────────────────────────────
+// 게임 클리어 후 표시되는 화면으로, 소요 시간과 현재 리그에서의 예상 등수,
+// 그리고 완성된 워드서치 그리드 및 친구 초대(공유) 링크 표시 기능을 합니다.
+const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number; onShowHearts: () => void; grid: GridCell[]; words: WordConfig[]; }) => {
   const { setView, leaderboard, currentUser, language, getReferralLink, consumeHeart } = useStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [cardGenerated, setCardGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const myEntry = leaderboard.find((e) => e.isCurrentUser);
-  const rank = myEntry?.rank ?? Math.floor(Math.random() * 200) + 10;
+  // Real rank calculation
+  const rank = myEntry?.rank ?? (leaderboard.filter(e => e.time < elapsed).length + 1);
   const percentile = leaderboard.length > 0 ? Math.ceil((rank / leaderboard.length) * 100) : 1;
   const titleText = percentile <= 10 ? 'TOP 1% ARMY' : `Rank #${rank}`;
 
@@ -367,41 +431,66 @@ const ResultScreen = ({ elapsed, onShowHearts }: { elapsed: number; onShowHearts
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1080, 1920);
 
-    // Decorative circles
-    ctx.beginPath();
-    ctx.arc(540, 400, 300, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 0, 128, 0.08)';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(540, 1400, 250, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0, 255, 255, 0.06)';
-    ctx.fill();
-
     // STANBEAT title
     ctx.fillStyle = '#FF0080';
     ctx.font = 'bold 72px Oswald, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('STANBEAT', 540, 200);
+    ctx.fillText('STANBEAT', 540, 160);
 
-    // Result title
+    // Render Miniaturized Grid (10x10)
+    // 10 cells * 54px + gap = approx 540px width. Center = 540, left = 270. y = 220
+    const startX = 270;
+    const startY = 220;
+    const cellSize = 50;
+    const gap = 4;
+    grid.forEach((cell) => {
+      const [r, c] = cell.id.split('-').map(Number);
+      const cx = startX + c * (cellSize + gap);
+      const cy = startY + r * (cellSize + gap);
+
+      // Cell background
+      ctx.fillStyle = cell.found ? '#00FFFF' : 'rgba(255, 255, 255, 0.05)';
+      ctx.beginPath();
+      ctx.roundRect(cx, cy, cellSize, cellSize, 8);
+      ctx.fill();
+
+      // Cell text
+      ctx.fillStyle = cell.found ? '#000000' : 'rgba(255, 255, 255, 0.8)';
+      ctx.font = 'bold 24px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(cell.letter, cx + cellSize / 2, cy + cellSize / 2);
+    });
+
+    // Result title (Rank)
     ctx.fillStyle = '#00FFFF';
-    ctx.font = 'bold 120px Oswald, sans-serif';
-    ctx.fillText(titleText, 540, 800);
+    ctx.font = 'bold 110px Oswald, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(titleText, 540, 880);
 
     // Clear time
     ctx.fillStyle = '#FFFFFF';
     ctx.font = 'bold 64px Inter, sans-serif';
-    ctx.fillText(`⏱ ${formatTime(elapsed)}`, 540, 950);
+    ctx.fillText(`⏱ ${formatTime(elapsed)}`, 540, 1010);
 
     // Nickname
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
     ctx.font = '36px Inter, sans-serif';
-    ctx.fillText(currentUser?.nickname ?? 'ARMY', 540, 1100);
+    ctx.fillText(currentUser?.nickname ?? 'ARMY', 540, 1140);
 
-    // Invite link
+    // Appeal / Event Text
+    ctx.fillStyle = '#FFD700'; // Gold Color
+    ctx.font = 'bold 42px Inter, sans-serif';
+    ctx.fillText(t(language, 'resultAppealText'), 540, 1300);
+
+    ctx.fillStyle = '#FF0080';
+    ctx.font = 'bold 36px Inter, sans-serif';
+    ctx.fillText(t(language, 'resultCtaText'), 540, 1380);
+
+    // Referral URL
     ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
     ctx.font = '28px Inter, sans-serif';
-    ctx.fillText(getReferralLink(), 540, 1500);
+    ctx.fillText(getReferralLink(), 540, 1550);
 
     // Footer
     ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
@@ -490,7 +579,9 @@ const ResultScreen = ({ elapsed, onShowHearts }: { elapsed: number; onShowHearts
   );
 };
 
-// ─── History Screen ───────────────────────────────────────────────
+// ─── 히스토리 화면 컴포넌트 ───────────────────────────────────────
+// 사용자가 과거에 플레이했던 기록(클리어 타임)들을 표시하고
+// 최고 기록 등 통계를 가시적으로 보여줍니다.
 const HistoryScreen = () => {
   const { setView, currentUser, language } = useStore();
   const history = currentUser?.gameHistory ?? [];
@@ -552,7 +643,9 @@ const HistoryScreen = () => {
   );
 };
 
-// ─── Leaderboard Screen ───────────────────────────────────────────
+// ─── 리더보드/랭킹 화면 컴포넌트 ──────────────────────────────────
+// 현재 속한 리그의 다른 유저 기록(가짜+진짜)을 동기화하여 보여주며,
+// 내 랭킹과 1등과의 격차 등을 제공합니다. 비로그인 유저에게는 샘플(게스트) 리그를 보여줍니다.
 const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const { setView, leaderboard, fetchLeaderboard, currentUser, language, consumeHeart, league, initLeague, getLeagueGap, getLeagueCountdown, login } = useStore();
   const [countdown, setCountdown] = useState('30:00');
@@ -705,7 +798,9 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   );
 };
 
-// ─── Admin Screen ─────────────────────────────────────────────────
+// ─── 관리자(Admin) 화면 컴포넌트 ──────────────────────────────────
+// 로고를 3초 이상 길게 누르면 접근 가능한 숨겨진 화면.
+// 통계 확인, 강제 데이터 초기화, 가짜 봇 생성, 공지사항 작성 등의 운영 기능을 담당합니다.
 const AdminScreen = () => {
   const {
     setView, leaderboard, heartsUsedToday, adRevenue, notice, setNotice,
@@ -1058,11 +1153,23 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   );
 };
 
-// ─── Main App ─────────────────────────────────────────────────────
+// ─── 메인 앱 컨테이너 컴포넌트 ────────────────────────────────────
+// 전체 앱의 상태(라우팅/뷰)를 관리하고, 언어 자동 감지,
+// 하트 충전 모달, 모바일 레이아웃(하단 정보) 등을 통합 렌더링합니다.
 export default function App() {
-  const { currentView, language, currentUser, initAdscendListener } = useStore();
+  const { currentView, language, currentUser, initAdscendListener, setLanguage } = useStore();
   const [showLanguageModal, setShowLanguageModal] = useState(false);
   const [showHeartsModal, setShowHeartsModal] = useState(false);
+
+  // IP 기반 언어 자동 감지
+  useEffect(() => {
+    const saved = localStorage.getItem('stanbeat_lang');
+    if (!saved) {
+      detectLanguageFromIP().then((lang) => {
+        if (lang) setLanguage(lang);
+      });
+    }
+  }, [setLanguage]);
 
   // Initialize ad rewards listener when logged in
   useEffect(() => {

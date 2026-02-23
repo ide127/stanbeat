@@ -67,7 +67,6 @@
   "chargeHearts": "💖 하트 충전",
   "rankingBoardTitle": "🏆 랭킹보드",
   "leagueInfo": "League #{leagueNum} · {players}명 · 총 {totalLeagues}개 리그 진행 중",
-  "leagueSyncNotice": "타 유저 기록은 30분마다 동기화됩니다",
   "almostFirst": "{gap}만 더 줄이면 1등! 🔥",
   "nextSync": "다음 동기화: {time}",
   "guestLeagueTitle": "🏆 실시간 리그 1등 현황",
@@ -114,5 +113,19 @@
   "testimonial29": "영국에서 참가했는데, 시차 때문에 새벽에 플레이했어요. 그래도 리그 1위! Worth it 🇬🇧",
   "testimonial30": "이런 기회가 또 올까 싶어서 더 열심히 했어요. 그리고 진짜 됐습니다. 감사합니다!",
   "testimonial31": "태국 ARMY인데, BTS 굿즈 받고 인스타 도배했어요 😂 팔로워가 2배로 늘었어요!",
-  "testimonial32": "6초대 기록! 역대 최고 기록으로 리그 1위 했어요. 전체 1위도 노려봐야지 ✨"
+  "testimonial32": "6초대 기록! 역대 최고 기록으로 리그 1위 했어요. 전체 1위도 노려봐야지 ✨",
+  "prizeOverallBanner": " 전체 1위  서울행 왕복 항공권",
+  "minutesUnit": "분",
+  "tickerEvent": "친구 초대 시 +1 즉시 지급!",
+  "leagueSyncNotice": "랭킹은 10분마다 동기화됩니다",
+  "resultAppealText": " 전체 1위: 서울행 왕복 항공권  지금 도전하세요!",
+  "prizeLeagueBanner": " 각 리그 1위  BTS 공식 굿즈  매일 자정 리셋",
+  "resultCtaUrl": "stanbeat.pages.dev",
+  "hoursUnit": "시간",
+  "leagueSyncLabel": "다음 랭킹 업데이트까지:",
+  "secondsUnit": "초",
+  "tickerLeague": " League #{league}에서 {name}님이 {time}초로 1등 달성!",
+  "prizeBanner": "🎁 First come, first served! Join the BTS Special Goods Event 👉",
+  "adBannerCTA": "Watch ad to get hearts",
+  "resultCtaText": "View Event Details"
 }

@@ -16,7 +16,7 @@ import { LeaderboardEntry } from './types';
 // ─── 상수 정의 ─────────────────────────────────────────────────────
 const LEAGUE_SIZE_MIN = 60;                          // 리그 최소 인원 수
 const LEAGUE_SIZE_MAX = 99;                          // 리그 최대 인원 수
-const REFRESH_INTERVAL_MS = 30 * 60 * 1000;          // 리그 자동 갱신 주기 (30분 = 1,800,000ms)
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000;          // 리그 자동 갱신 주기 (10분 = 600,000ms)
 const MIN_USER_RANK = 2;                             // 사용자 최고 순위 제한 (1위는 항상 AI)
 const MAX_USER_RANK = 30;                            // 사용자 최저 순위 제한 (너무 뒤로는 안 감)
 const TOTAL_LEAGUES_MEAN = 3624;                     // 전체 리그 수 정규분포 평균
@@ -51,14 +51,16 @@ export interface LeagueData {
  * @param stdDev - 표준편차 (값이 평균에서 얼마나 퍼지는지)
  */
 export function gaussianRandom(mean: number, stdDev: number): number {
+    // Box-Muller 변환에 사용할 0~1 사이의 균일 분포 난수 두 개를 담을 변수 선언
     let u1 = 0;
     let u2 = 0;
-    // log(0) = -Infinity 방지: 0이 나오면 다시 시도
-    while (u1 === 0) u1 = Math.random();
-    while (u2 === 0) u2 = Math.random();
-    // Box-Muller 공식: 두 균일 분포 난수를 정규 분포 난수로 변환
+    // Math.random()이 정확히 0이 나오면 log() 계산 시 -Infinity가 되므로 0이 아닐 때까지 반복
+    while (u1 === 0) u1 = Math.random(); // 첫 번째 균일 난수 생성
+    while (u2 === 0) u2 = Math.random(); // 두 번째 균일 난수 생성
+    // Box-Muller 공식을 이용해 두 균일 분포 난수를 표준 정규 분포(N(0, 1))를 따르는 난수 z로 변환
     const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-    return mean + z * stdDev; // 평균에 더해 원하는 분포로 이동 및 스케일링
+    // 표준 정규 분포 난수 z에 표준편차(stdDev)를 곱해 퍼짐 정도를 맞추고, 평균(mean)을 더해 분포의 중심을 이동하여 반환
+    return mean + z * stdDev;
 }
 
 /** 값을 min~max 범위로 클램핑 (범위를 벗어나지 않도록 강제) */
@@ -73,21 +75,27 @@ function clamp(value: number, min: number, max: number): number {
  * - 다른 유저는 항상 다른 리그 ID를 가짐 (리그 비교 불가)
  */
 function generateLeagueId(userId: string): string {
-    // 오늘의 시즌 번호(연중 일수)를 혼합하여 리그 ID가 매일 바뀌도록 함
+    // 오늘의 날짜를 기준으로 해당 시즌(하루)의 고유 번호를 가져옵니다.
     const dayOfYear = getCurrentSeasonNumber();
+    // 유저의 고유 ID와 시즌 번호를 결합한 문자열을 이용해 해시값을 생성합니다. (매일 달라짐)
     const hash = hashCode(userId + 'league_v3_day' + dayOfYear);   // 유저ID + 날짜로 해시 생성
-    // 해시를 두 부분으로 분리하고 추가 혼합하여 비슷한 입력도 완전히 다른 출력 생성
+    // 생성된 해시값을 기반으로 첫 번째 8자리 16진수 파트를 생성 (양수로 변환 후 큰 소수를 곱하여 난수화)
     const part1 = ((Math.abs(hash) * 2654435761) >>> 0).toString(16).padStart(8, '0'); // 앞 8자리
+    // 동일한 해시를 기반으로 변형을 주어 두 번째 8자리 16진수 파트를 생성
     const part2 = ((Math.abs(hash * 7 + 13) * 2246822519) >>> 0).toString(16).padStart(8, '0'); // 뒤 8자리
+    // 두 해시 문자열을 하이픈으로 연결하고 대문자로 변환하여 고유하고 추측 어려운 ID 문자열 반환
     return `${part1}-${part2}`.toUpperCase(); // 대문자 16진수 형식으로 반환 (예: A1B2C3D4-E5F60708)
 }
 
 /** 유저ID + 날짜 기반으로 60~99 사이의 리그 크기를 결정적(deterministic)으로 생성
  *  같은 유저, 같은 날은 항상 동일한 리그 크기 → 새로고침마다 인원 수가 바뀌지 않음 */
 function getLeagueSize(userId: string): number {
-    const dayOfYear = getCurrentSeasonNumber();                      // 오늘이 연중 몇 번째 날인지
-    const hash = Math.abs(hashCode(userId + 'size_v1_day' + dayOfYear)); // 유저ID + 날짜 해시
-    return LEAGUE_SIZE_MIN + (hash % (LEAGUE_SIZE_MAX - LEAGUE_SIZE_MIN + 1)); // 60~99 범위로 매핑
+    // 올해의 며칠째인지 나타내는 시즌 번호를 가져와 날짜별 고유성을 확보
+    const dayOfYear = getCurrentSeasonNumber();
+    // 유저 ID와 날짜 정보를 조합한 문자열에 대해 해시 함수를 돌려 양수 값을 추출
+    const hash = Math.abs(hashCode(userId + 'size_v1_day' + dayOfYear));
+    // 최대 인원과 최소 인원의 차이(+1)로 나눈 나머지 연산에 최소 인원을 더해 60~99 분포 반환
+    return LEAGUE_SIZE_MIN + (hash % (LEAGUE_SIZE_MAX - LEAGUE_SIZE_MIN + 1));
 }
 
 /** seed 값으로부터 결정적으로 BTS 팬덤 스타일 닉네임 생성
@@ -125,28 +133,31 @@ export function generateLeague(
     previousRank: number | null,
     hasNewBest: boolean,
 ): LeagueData {
-    const leagueSize = getLeagueSize(userId); // 이 리그의 총 인원 수 결정 (60~99)
+    // 유저의 ID를 기반으로 이 리그방의 총 인원수(60~99명)를 계산해옵니다.
+    const leagueSize = getLeagueSize(userId);
 
     // ─── 1단계: 유저의 목표 순위 결정 ──────────────────────────────
     // 정규 분포를 이용해 순위를 랜덤하게 결정하되, 이전 순위를 기반으로 연속성 유지
     let targetRank: number;
     if (previousRank === null) {
-        // 처음 플레이: 평균 15위, 표준편차 5의 정규분포로 2~30위 범위에서 결정
+        // 처음 플레이: 평균 15위, 표준편차 5위의 정규분포로 2~30위 사이에서 무작위 결정
         targetRank = Math.round(gaussianRandom(15, 5));
     } else if (hasNewBest) {
-        // 신기록 달성: 이전 순위보다 2칸 앞(평균)으로 이동하는 경향 (동기 부여)
+        // 신기록 달성: 이전 순위보다 평균 2계단 상승하는 정규분포를 적용해 동기부여 제공
         targetRank = Math.round(gaussianRandom(previousRank - 2, 2));
     } else {
-        // 일반 갱신: 이전 순위 근처에서 약간 오르내림 (±2.5 표준편차)
+        // 일반 갱신: 이전 순위 근처에서 약간 오르내리도록(표준편차 2.5) 설정하여 자연스러운 변동 구현
         targetRank = Math.round(gaussianRandom(previousRank, 2.5));
     }
-    // 순위가 허용 범위를 벗어나지 않도록 클램핑 (최소 2위, 최대 30위 또는 리그크기-5)
+    // 최종 산출된 목표 순위가 허용 가능한 범위(최소 2위 ~ 최대 제한)를 넘지 않도록 클램핑
     targetRank = clamp(targetRank, MIN_USER_RANK, Math.min(MAX_USER_RANK, leagueSize - 5));
 
     // ─── 2단계: 1위 합성 항목 생성 ─────────────────────────────────────
-    // 1위 플레이어는 항상 유저보다 약 1.5초 빠른 시간을 가짐 (달성 가능해 보이는 목표)
-    const gapToFirst = Math.abs(gaussianRandom(1500, 500)); // 평균 1.5초 더 빠름
-    const rank1Time = Math.max(5000, userTime - gapToFirst); // 최소 5초 (비현실적인 기록 방지)
+    // 1위 플레이어의 기록은 유저의 최고 기록보다 평균 1.5초 더 빠르게 생성하여 경쟁심 자극
+    const gapToFirst = Math.abs(gaussianRandom(1500, 500));
+    // 생성된 1위 기록이 너무 비현실적이지 않도록 최소 한계치(5초)를 보장
+    const rank1Time = Math.max(5000, userTime - gapToFirst);
+
 
     // ─── 3단계: 모든 항목 배열 구성 ───────────────────────────────────
     const entries: LeaderboardEntry[] = [];
