@@ -3,7 +3,7 @@
 // 환경변수(VITE_FIREBASE_*)가 없는 경우 mock 모드로 동작하여 오류 없이 실행됨
 
 // Firebase App 초기화에 필요한 함수 임포트
-import { initializeApp } from 'firebase/app';
+import { getApp, getApps, initializeApp } from 'firebase/app';
 
 // Firebase Auth 관련 기능 임포트
 // - getAuth: Auth 인스턴스 가져오기
@@ -70,7 +70,7 @@ const isConfigured = !!(
 
 // ─── Firebase 인스턴스 초기화 ─────────────────────────────────────────────
 // 환경변수가 있을 때만 실제 Firebase 앱 초기화 (없으면 null)
-const app = isConfigured ? initializeApp(firebaseConfig) : null;
+const app = isConfigured ? (getApps().length ? getApp() : initializeApp(firebaseConfig)) : null;
 
 // Firebase Auth 인스턴스 (로그인/로그아웃에 사용)
 const auth = isConfigured && app ? getAuth(app) : null;

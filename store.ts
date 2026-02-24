@@ -92,6 +92,8 @@ const favorites = ['Jimin', 'V', 'Tiger', 'Jungkook', 'Hobi', 'ARMY', 'Kookie'];
 const countries = ['KR', 'US', 'JP', 'BR', 'TH', 'ID', 'PH', 'FR', 'DE', 'VN'];
 const AVATAR_SEED = 'stanbeat-avatar';
 const THREE_HOURS = 3 * 60 * 60 * 1000;
+const MAX_HEARTS = 3;
+const MAX_HISTORY_ITEMS = 100;
 
 const todayUtc = () => new Date().toISOString().slice(0, 10);
 
@@ -122,10 +124,13 @@ const safeStorage = {
 };
 
 export const detectLanguageFromIP = async (): Promise<LanguageCode | null> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3000);
   try {
-    const res = await fetch('https://ipapi.co/json/');
+    const res = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+    if (!res.ok) return null;
     const data = await res.json();
-    const countryCode: string = data.country_code;
+    const countryCode = String(data.country_code ?? '').trim().toUpperCase();
     const map: Record<string, LanguageCode> = {
       KR: 'ko', JP: 'ja', CN: 'zh-CN', TH: 'th', ID: 'id',
       VN: 'vi', PH: 'en', US: 'en', GB: 'en', AU: 'en',
@@ -135,6 +140,8 @@ export const detectLanguageFromIP = async (): Promise<LanguageCode | null> => {
     return map[countryCode] ?? null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
@@ -146,7 +153,13 @@ const generateNickname = () => {
 };
 
 const generateReferralCode = () => {
-  return Math.random().toString(36).substring(2, 10);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(6);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => (b % 36).toString(36)).join('').slice(0, 8);
+  }
+  const randomPart = Math.random().toString(36).slice(2);
+  return randomPart.padEnd(8, 'x').slice(0, 8);
 };
 
 // 유저 객체의 하트 만료 시간을 체크하여, 만료되었다면 하트를 0으로 초기화해 반환하는 상태 정규화 함수
@@ -285,13 +298,13 @@ export const useStore = create<AppState>((set, get) => ({
     // 현재 접속한 브라우저의 URL에 있는 쿼리(query) 파라미터들을 파싱합니다.
     const urlParams = new URLSearchParams(window.location.search);
     // 쿼리 파라미터 중 추천인 코드('ref')가 있는지 확인하여 가져옵니다.
-    const refCode = urlParams.get('ref');
+    const refCode = urlParams.get('ref')?.trim().slice(0, 64) || null;
 
     // 파이어베이스(연동) 기능이 활성화되어 환경변수로 로드된 경우만 로그인 시도
     if (isFirebaseEnabled) {
       try {
         // 인앱 브라우저(인스타그램, 페이스북, 카카오톡 등) 감지 및 경고
-        const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+        const userAgent = [navigator.userAgent, navigator.vendor].filter(Boolean).join(' ');
         const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads/i.test(userAgent);
         if (isEmbeddedBrowser) {
           alert('인앱 브라우저에서는 구글 로그인이 차단될 수 있습니다. 오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어주세요.\n\nIn-app browsers may block Google Login. Please open in Chrome/Safari.');
@@ -376,12 +389,14 @@ export const useStore = create<AppState>((set, get) => ({
           return;
         }
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         // 로그인이 실패하거나 여러 이유로 진행할 수 없었을 때 발생
         console.error('Google login failed:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
 
         // 403 disallowed_useragent 에러 (보통 인앱 브라우저 등에서 구글이 차단할 때 발생)
-        if (error?.message?.includes('disallowed_useragent') || error?.code === 'auth/unauthorized-domain' || error?.message?.includes('403')) {
+        if (message.includes('disallowed_useragent') || code === 'auth/unauthorized-domain' || message.includes('403')) {
           alert('보안상의 이유로 현재 브라우저에서는 구글 로그인을 진행할 수 없습니다.\n오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어 다시 시도해주세요.\n\nGoogle Login is blocked in this browser. Please open in Chrome/Safari.');
         } else {
           alert('구글 로그인에 실패했습니다. 다시 시도해주세요.\nGoogle login failed. Please try again.');
@@ -418,11 +433,15 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   logout: () => {
+    const unsub = get().rewardListenerUnsubscribe;
+    if (unsub) {
+      unsub();
+    }
     if (isFirebaseEnabled) {
       firebaseSignOut().catch(console.error);
     }
     safeStorage.set('stanbeat_user', null);
-    set({ currentUser: null, currentView: 'HOME', termsAccepted: false });
+    set({ currentUser: null, currentView: 'HOME', termsAccepted: false, rewardListenerUnsubscribe: null, videoWatchCount: 0 });
   },
 
   consumeHeart: () => {
@@ -456,11 +475,11 @@ export const useStore = create<AppState>((set, get) => ({
     if (!user || user.banned) return;
     const normalized = normalizeHearts(user);
     const record: HistoryEvent | null = amount > 0 ? { type: 'AD', value: amount, date: new Date().toISOString() } : null;
-    const nextHistory = record ? [...normalized.gameHistory, record] : normalized.gameHistory;
+    const nextHistory = (record ? [...normalized.gameHistory, record] : normalized.gameHistory).slice(-MAX_HISTORY_ITEMS);
 
     const updatedUser = {
       ...normalized,
-      hearts: normalized.hearts + amount,
+      hearts: Math.max(0, Math.min(MAX_HEARTS, normalized.hearts + amount)),
       expiresAt: Date.now() + THREE_HOURS,
       gameHistory: nextHistory,
     };
@@ -489,12 +508,15 @@ export const useStore = create<AppState>((set, get) => ({
     const record: HistoryEvent = { type: 'DAILY', value: 1, date: new Date().toISOString() };
     const updatedUser = {
       ...normalized,
-      hearts: Math.min(normalized.hearts + 1, 3),
+      hearts: Math.min(normalized.hearts + 1, MAX_HEARTS),
       lastDailyHeart: todayUtc(),
       expiresAt: Date.now() + THREE_HOURS,
-      gameHistory: [...normalized.gameHistory, record],
+      gameHistory: [...normalized.gameHistory, record].slice(-MAX_HISTORY_ITEMS),
     };
     safeStorage.set('stanbeat_user', updatedUser);
+    if (isFirebaseEnabled) {
+      saveUserProfile(updatedUser.id, { hearts: updatedUser.hearts, lastDailyHeart: updatedUser.lastDailyHeart }).catch(console.error);
+    }
     set({ currentUser: updatedUser });
     return true;
   },
@@ -535,7 +557,7 @@ export const useStore = create<AppState>((set, get) => ({
     const user = get().currentUser;
     if (!user) return;
     const record: HistoryEvent = { type, value, date: new Date().toISOString() };
-    const nextUser = { ...user, gameHistory: [...user.gameHistory, record].slice(-100) };
+    const nextUser = { ...user, gameHistory: [...user.gameHistory, record].slice(-MAX_HISTORY_ITEMS) };
     safeStorage.set('stanbeat_user', nextUser);
     set({ currentUser: nextUser });
 
@@ -679,6 +701,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   banUser: (id) => {
+    if (!id) return;
     if (isFirebaseEnabled) {
       banUserInFs(id);
     }
@@ -689,28 +712,36 @@ export const useStore = create<AppState>((set, get) => ({
       user.id === id ? { ...user, banned: true } : user
     );
 
+    const currentUser = get().currentUser;
+    const nextCurrentUser = currentUser?.id === id ? { ...currentUser, banned: true } : currentUser;
+    if (nextCurrentUser) {
+      safeStorage.set('stanbeat_user', nextCurrentUser);
+    }
+
     safeStorage.set('stanbeat_leaderboard', combined);
-    set({ leaderboard: combined, adminUsers: updatedAdminUsers });
+    set({ leaderboard: combined, adminUsers: updatedAdminUsers, currentUser: nextCurrentUser ?? currentUser });
   },
 
   editUserHeart: (id, hearts) => {
+    if (!id || !Number.isFinite(hearts)) return;
+    const clampedHearts = Math.max(0, Math.min(MAX_HEARTS, Math.floor(hearts)));
     if (isFirebaseEnabled) {
-      editUserHeartInFirestore(id, hearts);
+      editUserHeartInFirestore(id, clampedHearts);
     }
 
     const user = get().currentUser;
     if (user && user.id === id) {
-      const updatedUser = { ...user, hearts: Math.max(0, Math.min(3, hearts)), expiresAt: Date.now() + THREE_HOURS };
+      const updatedUser = { ...user, hearts: clampedHearts, expiresAt: Date.now() + THREE_HOURS };
       safeStorage.set('stanbeat_user', updatedUser);
       set({ currentUser: updatedUser });
     }
 
     const combined = get().leaderboard.map((entry) =>
-      entry.id === id ? { ...entry, hearts: Math.max(0, Math.min(3, hearts)) } : entry
+      entry.id === id ? { ...entry, hearts: clampedHearts } : entry
     );
 
     const updatedAdminUsers = get().adminUsers.map(user =>
-      user.id === id ? { ...user, hearts: Math.max(0, Math.min(3, hearts)) } : user
+      user.id === id ? { ...user, hearts: clampedHearts } : user
     );
 
     safeStorage.set('stanbeat_leaderboard', combined);
@@ -719,8 +750,8 @@ export const useStore = create<AppState>((set, get) => ({
 
   getReferralLink: () => {
     const user = get().currentUser;
-    if (!user) return window.location.origin;
-    return `${window.location.origin}?ref=${user.referralCode}`;
+    if (!user) return window.location.href;
+    return `${window.location.origin}${window.location.pathname}?ref=${encodeURIComponent(user.referralCode)}`;
   },
 
   toggleAdminRole: () => {
@@ -759,7 +790,16 @@ export const useStore = create<AppState>((set, get) => ({
   // ─── Ad System ──────────────────────────────────────────────────
   setAdConfig: (partial) => {
     const current = get().adConfig;
-    const next = { ...current, ...partial };
+    const merged = { ...current, ...partial };
+    const next: AdConfig = {
+      rewardedVideo: Boolean(merged.rewardedVideo),
+      offerwall: Boolean(merged.offerwall),
+      interstitial: Boolean(merged.interstitial),
+      rewardedVideoSeconds: Math.max(5, Math.min(120, Math.floor(merged.rewardedVideoSeconds))),
+      offerwallRewardHearts: Math.max(1, Math.min(MAX_HEARTS, Math.floor(merged.offerwallRewardHearts))),
+      rewardedVideoRewardHearts: Math.max(1, Math.min(MAX_HEARTS, Math.floor(merged.rewardedVideoRewardHearts))),
+      videosPerHeart: Math.max(1, Math.min(20, Math.floor(merged.videosPerHeart))),
+    };
     safeStorage.set('stanbeat_ad_config', next);
     set({ adConfig: next });
   },
@@ -775,18 +815,22 @@ export const useStore = create<AppState>((set, get) => ({
 
   initAdscendListener: () => {
     const user = get().currentUser;
-    if (!user || get().rewardListenerUnsubscribe) return;
+    if (!user) return;
+
+    const existingUnsub = get().rewardListenerUnsubscribe;
+    if (existingUnsub) {
+      existingUnsub();
+      set({ rewardListenerUnsubscribe: null });
+    }
 
     console.log('[Adscend] Initializing reward listener for', user.id);
-    // listenForRewards 콜백: 새로운 광고 보상 수신 시 하트 지급 및 Firestore 청구 처리
     const unsub = listenForRewards(user.id, (reward) => {
       console.log('[Adscend] 새 보상 수신:', reward);
-      // 유저에게 하트 1개 지급
       get().addHeart(1);
-      // Firestore에 보상 청구 완료 기록 (이중 지급 방지)
-      // reward를 명시적으로 타입 캐스팅하여 id 속성에 안전하게 접근
-      const { id: rewardId } = reward as { id: string };
-      claimRewardInFirestore(rewardId).catch(console.error);
+      const rewardId = typeof reward === 'object' && reward && 'id' in reward ? String((reward as { id?: unknown }).id ?? '') : '';
+      if (rewardId) {
+        claimRewardInFirestore(rewardId).catch(console.error);
+      }
     });
     set({ rewardListenerUnsubscribe: unsub });
   },
@@ -799,19 +843,24 @@ export const useStore = create<AppState>((set, get) => ({
       const user = get().currentUser;
       if (!user || user.banned) { resolve(false); return; }
 
+      const heartsReward = Math.max(1, Math.min(MAX_HEARTS, Math.floor(config.rewardedVideoRewardHearts)));
+      const videosPerHeart = Math.max(1, Math.floor(config.videosPerHeart));
       const nextCount = get().videoWatchCount + 1;
 
-      if (nextCount >= config.videosPerHeart) {
+      if (nextCount >= videosPerHeart) {
         // Reset count and grant heart
         const normalized = normalizeHearts(user);
-        const record: HistoryEvent = { type: 'AD', value: config.rewardedVideoRewardHearts, date: new Date().toISOString() };
+        const record: HistoryEvent = { type: 'AD', value: heartsReward, date: new Date().toISOString() };
         const updatedUser = {
           ...normalized,
-          hearts: Math.min(normalized.hearts + config.rewardedVideoRewardHearts, 3),
+          hearts: Math.min(normalized.hearts + heartsReward, MAX_HEARTS),
           expiresAt: Date.now() + THREE_HOURS,
-          gameHistory: [...normalized.gameHistory, record],
+          gameHistory: [...normalized.gameHistory, record].slice(-MAX_HISTORY_ITEMS),
         };
         const newRevenue = get().adRevenue + 0.35;
+        if (isFirebaseEnabled) {
+          incrementGlobalStats(0, 0.35);
+        }
         safeStorage.set('stanbeat_user', updatedUser);
         safeStorage.set('stanbeat_ad_revenue', newRevenue);
         set({ adRevenue: newRevenue, currentUser: updatedUser, videoWatchCount: 0 });
@@ -826,10 +875,10 @@ export const useStore = create<AppState>((set, get) => ({
 
   completeOfferwall: async () => {
     const config = get().adConfig;
-    if (!config.offerwall) return false;
+    const user = get().currentUser;
+    if (!config.offerwall || !user || user.banned) return false;
 
-    // Real offerwall rewards are handled by initAdscendListener + Firestore S2S Postback
-    // This function can be used to trigger an immediate check or analytics
+    get().addHeart(Math.max(1, Math.min(MAX_HEARTS, Math.floor(config.offerwallRewardHearts))));
     return true;
   },
 }));
