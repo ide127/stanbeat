@@ -44,6 +44,7 @@ import {
     getDocs,
     serverTimestamp,
     increment,
+    onSnapshot,
 } from 'firebase/firestore';
 
 // ─── Firebase 설정 객체 ──────────────────────────────────────────────────────
@@ -223,6 +224,20 @@ export async function getGlobalStats(): Promise<Record<string, unknown> | null> 
         console.error('[Firebase] Failed to fetch global stats:', err);
         return null;
     }
+}
+
+// ─── Firestore: 글로벌 통계 실시간 조회 (Admin) ──────────────────────
+export function listenGlobalStats(callback: (stats: { totalHeartsUsed: number, adRevenue: number }) => void): () => void {
+    if (!db) return () => { };
+    const unsub = onSnapshot(doc(db, 'stats', 'global'), (snap) => {
+        if (snap.exists()) {
+            const data = snap.data();
+            callback({ totalHeartsUsed: Number(data.totalHeartsUsed || 0), adRevenue: Number(data.adRevenue || 0) });
+        }
+    }, (err) => {
+        console.error('[Firebase] Failed to listen to global stats:', err);
+    });
+    return unsub;
 }
 
 // ─── Firestore: 전체 사용자 목록 반환 (Admin) ─────────────────────────

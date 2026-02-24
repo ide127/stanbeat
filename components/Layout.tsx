@@ -84,7 +84,7 @@ export const Header = () => {
 
   return (
     <header className="sticky top-0 z-50 bg-[#1A0B2E]/90 backdrop-blur-md border-b border-[#FF0080]/30 px-4 py-3 flex justify-between items-center shadow-[0_4px_20px_rgba(255,0,128,0.2)]">
-      <button onClick={() => { vibrate(); toggleMenu(); }} className="text-[#00FFFF] btn-squishy neon-glow-icon">
+      <button onClick={() => { vibrate(); toggleMenu(); }} className="text-[#00FFFF] btn-squishy neon-glow-icon" aria-label="Open Menu">
         <Menu size={24} />
       </button>
       {/* 5초(현재 3초) 롱프레스 시 관리자 모드(ADMIN) 토글 활성화 */}
@@ -113,6 +113,8 @@ export const Header = () => {
 // ─── 사이드 메뉴 컴포넌트 (로그인/로그아웃, 홈, 리더보드, 히스토리 등) ───
 export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () => void; onOpenHearts: () => void }) => {
   const { isMenuOpen, toggleMenu, currentUser, logout, login, setView, language, consumeHeart } = useStore();
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
   if (!isMenuOpen) return null;
 
   return (
@@ -122,7 +124,7 @@ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () 
         <div className="p-6 border-b border-white/10 bg-gradient-to-br from-[#FF0080]/20 to-transparent">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-[#00FFFF] font-display text-xl neon-cyan">{t(language, 'profile')}</h2>
-            <button onClick={toggleMenu} className="btn-squishy"><X className="text-white/70" /></button>
+            <button onClick={toggleMenu} className="btn-squishy" aria-label="Close Menu"><X className="text-white/70" /></button>
           </div>
           {currentUser ? (
             <div className="flex items-center gap-3">
@@ -134,9 +136,21 @@ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () 
             </div>
           ) : (
             <button
-              onClick={() => { vibrate(); login(); toggleMenu(); }}
-              className="w-full bg-[#FF0080] text-white py-2 rounded font-bold btn-squishy"
+              disabled={isLoggingIn}
+              onClick={async () => {
+                if (isLoggingIn) return;
+                setIsLoggingIn(true);
+                vibrate();
+                try {
+                  await login();
+                  toggleMenu();
+                } finally {
+                  setIsLoggingIn(false);
+                }
+              }}
+              className="w-full bg-[#FF0080] text-white py-2 rounded font-bold btn-squishy disabled:opacity-50 flex items-center justify-center gap-2"
             >
+              {isLoggingIn ? <span className="animate-spin text-xl">↻</span> : null}
               {t(language, 'loginWithGoogle')}
             </button>
           )}
@@ -180,7 +194,7 @@ const MenuItem = ({ icon, label, color = 'text-white', onClick }: { icon: React.
 
 export const Layout = ({ children, onOpenLanguage, onOpenHearts }: { children?: React.ReactNode; onOpenLanguage: () => void; onOpenHearts: () => void }) => (
   <div className="min-h-screen bg-[#1A0B2E] flex justify-center items-start relative overflow-hidden">
-    <div className="fixed inset-0 bg-gradient-to-br from-[#1A0B2E] via-[#0D0518] to-[#1A0B2E] animate-[bgShift_12s_ease-in-out_infinite_alternate] opacity-60" />
+    <div className="fixed inset-0 bg-gradient-to-br from-[#1A0B2E] via-[#0D0518] to-[#1A0B2E] animate-[bgShift_12s_ease-in-out_infinite_alternate] opacity-60" style={{ willChange: 'background-position' }} />
     <div className="fixed inset-0 bg-black/70 z-0" />
     <div className="w-full max-w-[430px] min-h-screen bg-[#0D0518]/85 relative z-10 shadow-2xl flex flex-col">
       <Header />
@@ -192,12 +206,21 @@ export const Layout = ({ children, onOpenLanguage, onOpenHearts }: { children?: 
 );
 
 export const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: string; children?: React.ReactNode }) => {
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [isOpen]);
+
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="bg-[#1A0B2E] w-full max-w-sm rounded-2xl border border-[#FF0080]/40 shadow-[0_0_30px_rgba(255,0,128,0.4)] relative p-6">
-        <button onClick={onClose} className="absolute top-4 right-4 text-white/50 hover:text-white btn-squishy"><XCircle /></button>
+      <div className="bg-[#1A0B2E] w-full max-w-sm rounded-2xl border border-[#FF0080]/40 shadow-[0_0_30px_rgba(255,0,128,0.4)] relative p-6 max-h-[90vh] overflow-y-auto">
+        <button onClick={onClose} className="absolute top-4 right-4 text-white/50 hover:text-white btn-squishy" aria-label="Close Modal"><XCircle /></button>
         <h3 className="text-2xl font-display text-white mb-4 text-center">{title}</h3>
         {children}
       </div>

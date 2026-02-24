@@ -34,6 +34,8 @@ interface AppState {
   language: LanguageCode;
   notice: string;
   showNoticePopup: boolean;
+  showBrowserBlocker: boolean;
+  deferredPrompt: any | null;
   termsAccepted: boolean;
   seasonEndsAt: number;
   heartsUsedToday: number;
@@ -52,6 +54,8 @@ interface AppState {
   setLanguage: (lang: LanguageCode) => void;
   setNotice: (value: string) => void;
   setShowNoticePopup: (value: boolean) => void;
+  setShowBrowserBlocker: (value: boolean) => void;
+  setDeferredPrompt: (value: any | null) => void;
   acceptTerms: () => void;
 
   setBotConfig: (config: BotConfig) => void;
@@ -60,7 +64,7 @@ interface AppState {
   logout: () => void;
   consumeHeart: () => boolean;
   addHeart: (amount: number) => void;
-  claimDailyHeart: () => boolean;
+  claimDailyHeart: () => Promise<boolean>;
 
   updateBestTime: (time: number) => void;
   addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY', value: number) => void;
@@ -122,6 +126,9 @@ const safeStorage = {
 };
 
 export const detectLanguageFromIP = async (): Promise<LanguageCode | null> => {
+  if (safeStorage.get<boolean>('stanbeat_manual_lang', false)) {
+    return null; // Do not override if the user manually selected a language
+  }
   try {
     const res = await fetch('https://ipapi.co/json/');
     const data = await res.json();
@@ -146,7 +153,9 @@ const generateNickname = () => {
 };
 
 const generateReferralCode = () => {
-  return Math.random().toString(36).substring(2, 10);
+  const rand = Math.random().toString(36).substring(2, 8);
+  const time = Date.now().toString(36).slice(-4);
+  return (rand + time).toUpperCase();
 };
 
 // 유저 객체의 하트 만료 시간을 체크하여, 만료되었다면 하트를 0으로 초기화해 반환하는 상태 정규화 함수
@@ -224,13 +233,15 @@ const savedAdConfig = safeStorage.get<AdConfig>('stanbeat_ad_config', DEFAULT_AD
 const savedBotConfig = safeStorage.get<BotConfig>('stanbeat_bot_config', { mean: 50000, stdDev: 15000 });
 
 export const useStore = create<AppState>((set, get) => ({
-  currentUser: savedUser ? normalizeHearts(savedUser) : null,
+  currentUser: savedUser ? normalizeHearts({ ...savedUser, gameHistory: Array.isArray(savedUser.gameHistory) ? savedUser.gameHistory.slice(-100) : [] }) : null,
   currentView: 'HOME',
   isMenuOpen: false,
   leaderboard: savedLeaderboard,
   language: savedLang,
   notice: savedNotice,
   showNoticePopup: savedShowNotice,
+  showBrowserBlocker: false,
+  deferredPrompt: null,
   termsAccepted: savedUser?.agreedToTerms ?? false,
   seasonEndsAt: safeStorage.get<number>('stanbeat_season_ends', Date.now() + getMsUntilNextUtcMidnight()),
   heartsUsedToday: safeStorage.get<number>('stanbeat_hearts_used', 0),
@@ -244,10 +255,16 @@ export const useStore = create<AppState>((set, get) => ({
   adminStats: { totalHeartsUsed: 0, adRevenue: 0 },
   botConfig: savedBotConfig,
 
-  setView: (view) => set({ currentView: view }),
+  setView: (view) => {
+    if (view !== get().currentView) {
+      window.history.pushState({ view }, '', window.location.pathname);
+      set({ currentView: view });
+    }
+  },
   toggleMenu: () => set((state) => ({ isMenuOpen: !state.isMenuOpen })),
   setLanguage: (language) => {
     safeStorage.set('stanbeat_lang', language);
+    safeStorage.set('stanbeat_manual_lang', true);
     if (language === 'ar') {
       document.documentElement.setAttribute('dir', 'rtl');
     } else {
@@ -263,6 +280,8 @@ export const useStore = create<AppState>((set, get) => ({
     safeStorage.set('stanbeat_show_notice', value);
     set({ showNoticePopup: value });
   },
+  setShowBrowserBlocker: (value) => set({ showBrowserBlocker: value }),
+  setDeferredPrompt: (value) => set({ deferredPrompt: value }),
   acceptTerms: () => {
     const user = get().currentUser;
     if (!user) return;
@@ -381,8 +400,8 @@ export const useStore = create<AppState>((set, get) => ({
         console.error('Google login failed:', error);
 
         // 403 disallowed_useragent 에러 (보통 인앱 브라우저 등에서 구글이 차단할 때 발생)
-        if (error?.message?.includes('disallowed_useragent') || error?.code === 'auth/unauthorized-domain' || error?.message?.includes('403')) {
-          alert('보안상의 이유로 현재 브라우저에서는 구글 로그인을 진행할 수 없습니다.\n오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어 다시 시도해주세요.\n\nGoogle Login is blocked in this browser. Please open in Chrome/Safari.');
+        if (error?.message?.includes('disallowed_useragent') || error?.code === 'auth/unauthorized-domain' || error?.message?.includes('403') || error?.message?.includes('OAuth')) {
+          set({ showBrowserBlocker: true });
         } else {
           alert('구글 로그인에 실패했습니다. 다시 시도해주세요.\nGoogle login failed. Please try again.');
         }
@@ -478,11 +497,22 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   // ─── 일일 하트 지급 처리 ──────────────────────────────────────────
-  claimDailyHeart: () => {
+  claimDailyHeart: async () => {
     const user = get().currentUser;
     if (!user || user.banned) return false;
     const normalized = normalizeHearts(user);
-    if (normalized.lastDailyHeart === todayUtc()) {
+
+    let todayStr = todayUtc();
+    try {
+      // Validate via un-spoofable public time API instead of local device clock
+      const res = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
+      const data = await res.json();
+      todayStr = data.datetime.slice(0, 10);
+    } catch {
+      // Silently fallback to device time if API is blocked/offline
+    }
+
+    if (normalized.lastDailyHeart === todayStr) {
       set({ currentUser: normalized });
       return false;
     }
@@ -490,7 +520,7 @@ export const useStore = create<AppState>((set, get) => ({
     const updatedUser = {
       ...normalized,
       hearts: Math.min(normalized.hearts + 1, 3),
-      lastDailyHeart: todayUtc(),
+      lastDailyHeart: todayStr,
       expiresAt: Date.now() + THREE_HOURS,
       gameHistory: [...normalized.gameHistory, record],
     };
@@ -501,6 +531,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   // ─── 최고 기록 갱신 및 Firestore 저장 ──────────────────────────────
   updateBestTime: (time) => {
+    // Basic debounce guard to prevent high-frequency physics spam updates
     if (time < 5000) {
       console.warn(`[Anti-Cheat] Rejected impossible time: ${time}ms`);
       return;
@@ -775,7 +806,11 @@ export const useStore = create<AppState>((set, get) => ({
 
   initAdscendListener: () => {
     const user = get().currentUser;
-    if (!user || get().rewardListenerUnsubscribe) return;
+    const existingUnsub = get().rewardListenerUnsubscribe;
+    if (!user) return;
+    if (existingUnsub) {
+      existingUnsub();
+    }
 
     console.log('[Adscend] Initializing reward listener for', user.id);
     // listenForRewards 콜백: 새로운 광고 보상 수신 시 하트 지급 및 Firestore 청구 처리

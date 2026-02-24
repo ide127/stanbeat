@@ -5,6 +5,50 @@
 // 그리드 셀/단어 설정 타입 임포트 (types.ts에서 정의됨)
 import { GridCell, WordConfig } from './types';
 
+// ─── 오디오 합성기 (SFX) ───────────────────────────────────────────────────────
+let audioCtx: AudioContext | null = null;
+export const playSfx = (type: 'tap' | 'found' | 'win') => {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+
+    if (type === 'tap') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(300, now + 0.1);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      osc.start(now);
+      osc.stop(now + 0.1);
+    } else if (type === 'found') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(880, now + 0.1);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.linearRampToValueAtTime(0, now + 0.2);
+      osc.start(now);
+      osc.stop(now + 0.2);
+    } else if (type === 'win') {
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(400, now);
+      osc.frequency.setValueAtTime(600, now + 0.1);
+      osc.frequency.setValueAtTime(800, now + 0.2);
+      osc.frequency.setValueAtTime(1200, now + 0.3);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.linearRampToValueAtTime(0, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+    }
+  } catch (e) {
+    // Ignore audio errors on unsupported browsers or strict autoplay rules
+  }
+};
+
 // ─── 시간 포맷터 ─────────────────────────────────────────────────────────────
 // 밀리초 정수를 "MM:SS.CC" 형식의 문자열로 변환
 // 예: 75432ms → "01:15.43"
@@ -98,48 +142,48 @@ const placeWord = (
 
 // ─── 단어 찾기 그리드 생성기 ─────────────────────────────────────────────────
 // 주어진 크기와 단어 목록으로 단어 찾기 보드를 생성하는 핵심 함수
-// 대각선 방향도 지원하며, 빈 칸은 랜덤 알파벳으로 채움
+// 빈 칸이 너무 한쪽으로 쏠리지 않도록 최소 3번까지 재시도하는 엔트로피 패스 적용
 export const generateGrid = (size: number, words: string[]) => {
-  // size × size 크기의 빈 2차원 배열 초기화 (각 셀은 빈 문자열)
-  const board: string[][] = Array(size).fill(null).map(() => Array(size).fill(''));
+  let bestGrid: any = null;
+  let minEmptyRows = size;
 
-  // 모든 단어를 '아직 못 찾음(found: false)' 상태로 초기화
-  const placedWords: WordConfig[] = words.map(w => ({ word: w, found: false }));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const board: string[][] = Array(size).fill(null).map(() => Array(size).fill(''));
+    const placedWords: WordConfig[] = words.map(w => ({ word: w, found: false }));
+    const placement: PlacedWord[] = [];
 
-  // 각 단어의 배치 정보를 저장할 배열 (정답 검증 및 자동 풀기에 사용)
-  const placement: PlacedWord[] = [];
-
-  // ─── 각 단어 배치 시도 ─────────────────────────────────────────────
-  words.forEach(word => {
-    let placed = false;  // 이번 단어가 성공적으로 배치되었는지 여부
-    let attempts = 0;    // 시도 횟수 (무한 루프 방지)
-
-    while (!placed && attempts < 200) { // 최대 200번 시도
-      // 랜덤 방향 선택 (수평/수직/대각선 중 하나)
-      const dir = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
-
-      // 랜덤 시작 위치 선택
-      const row = Math.floor(Math.random() * size);
-      const col = Math.floor(Math.random() * size);
-
-      // 배치 가능하면 실제로 배치하고 루프 종료
-      if (canPlaceWord(board, word, row, col, dir, size)) {
-        placement.push(placeWord(board, word, row, col, dir));
-        placed = true;
+    words.forEach(word => {
+      let placed = false;
+      let attempts = 0;
+      while (!placed && attempts < 200) {
+        const dir = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
+        const row = Math.floor(Math.random() * size);
+        const col = Math.floor(Math.random() * size);
+        if (canPlaceWord(board, word, row, col, dir, size)) {
+          placement.push(placeWord(board, word, row, col, dir));
+          placed = true;
+        }
+        attempts++;
       }
-      attempts++;
+    });
+
+    const emptyRows = board.filter(r => r.every(c => c === '')).length;
+    const currentGrid = { board, placedWords, placement, emptyRows };
+
+    if (!bestGrid || emptyRows < minEmptyRows) {
+      bestGrid = currentGrid;
+      minEmptyRows = emptyRows;
     }
-    // 200번 시도 후에도 배치 실패 시 해당 단어는 그냥 누락됨
-    // (실제로는 10×10 보드에서 7글자 이하 단어는 거의 항상 성공)
-  });
+
+    if (emptyRows <= 1) break; // Perfect spread, stop rolling
+  }
+
+  const { board, placedWords, placement } = bestGrid;
 
   // ─── 셀 → 단어 매핑 구축 ──────────────────────────────────────────
-  // "이 셀은 어떤 단어에 속하는가"를 O(1)로 조회하기 위한 Map
-  // key: "행-열" 문자열, value: 해당 셀이 속한 단어
   const cellWordMap: Map<string, string> = new Map();
-  placement.forEach(({ word, row, col, dir }) => {
+  placement.forEach(({ word, row, col, dir }: PlacedWord) => {
     for (let i = 0; i < word.length; i++) {
-      // 각 글자의 셀 ID를 키로, 단어를 값으로 저장
       cellWordMap.set(`${row + dir.r * i}-${col + dir.c * i}`, word);
     }
   });

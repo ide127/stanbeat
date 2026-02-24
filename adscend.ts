@@ -76,10 +76,14 @@ export function listenForRewards(userId: string, onReward: (reward: unknown) => 
 // claimedAt = 서버 타임스탬프 → 이 값이 있으면 listenForRewards 쿼리에 걸리지 않음
 export async function claimRewardInFirestore(rewardId: string): Promise<void> {
     if (!db) return; // Firestore 미설정이면 무시
-    const rewardRef = doc(db, 'adRewards', rewardId); // 보상 문서 참조
+    try {
+        const rewardRef = doc(db, 'adRewards', rewardId); // 보상 문서 참조
 
-    // claimedAt 필드를 서버 타임스탬프로 업데이트 (청구 완료 기록)
-    await updateDoc(rewardRef, {
-        claimedAt: serverTimestamp(), // 클라이언트 시간 대신 서버 시간 사용 (조작 방지)
-    });
+        // claimedAt 필드를 서버 타임스탬프로 업데이트 (청구 완료 기록)
+        await updateDoc(rewardRef, {
+            claimedAt: serverTimestamp(), // 클라이언트 시간 대신 서버 시간 사용 (조작 방지)
+        });
+    } catch (error) {
+        console.error('[Adscend] Failed to claim reward:', error);
+    }
 }

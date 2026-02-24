@@ -5,12 +5,12 @@ import { languageOptions, t } from './i18n';
 import { useStore, detectLanguageFromIP, type AdConfig } from './store';
 import { GridCell, WordConfig } from './types';
 import confetti from 'canvas-confetti';
-import { formatTime, generateGrid, getCountryFlag, getSolutionCells } from './utils';
+import { formatTime, generateGrid, getCountryFlag, getSolutionCells, playSfx } from './utils';
 import { getCurrentSeasonNumber, generateGuestShowcase } from './league';
 
 const TARGET_WORDS = ['RM', 'JIN', 'SUGA', 'HOPE', 'JIMIN', 'V', 'JK'];
 
-const vibrate = () => navigator.vibrate?.(15);
+const vibrate = () => { navigator.vibrate?.(15); playSfx('tap'); };
 
 // ─── Home Screen ───────────────────────────────────────────────────
 // ─── 홈 화면 컴포넌트 ─────────────────────────────────────────────
@@ -23,6 +23,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const [showNoticeModal, setShowNoticeModal] = useState(false);
   const [rewardIndex, setRewardIndex] = useState(0);
   const [transitioning, setTransitioning] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [remainingParts, setRemainingParts] = useState({ h: 0, m: 0, s: 0, ms: 0 });
 
   // Show notice popup on mount if enabled
@@ -140,6 +141,17 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         </div>
       </button>
 
+      {useStore.getState().deferredPrompt && (
+        <button onClick={() => {
+          vibrate();
+          const promptEvent = useStore.getState().deferredPrompt;
+          promptEvent.prompt();
+          promptEvent.userChoice.then(() => useStore.setState({ deferredPrompt: null }));
+        }} className="w-full mt-3 bg-[#00FFFF]/20 border border-[#00FFFF]/50 text-[#00FFFF] font-bold py-3 rounded-xl btn-squishy flex items-center justify-center gap-2">
+          📱 Install App for Best Experience
+        </button>
+      )}
+
       <div className="mt-4 rounded-xl overflow-hidden border border-white/10 bg-black/30">
         <img src={rewardImages[rewardIndex]} alt="reward" className="w-full h-24 object-cover" />
         <p className="text-white/80 text-xs py-2">{t(language, 'rewardText')}</p>
@@ -180,9 +192,21 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
       <Modal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} title={t(language, 'loginRequired')}>
         <p className="text-white/70 text-sm mb-4">{t(language, 'loginPrompt')}</p>
         <button
-          onClick={() => { vibrate(); login().then(() => setShowLoginModal(false)); }}
-          className="w-full bg-white text-black font-bold py-3 rounded-xl btn-squishy"
+          disabled={isLoggingIn}
+          onClick={async () => {
+            if (isLoggingIn) return;
+            setIsLoggingIn(true);
+            vibrate();
+            try {
+              await login();
+              setShowLoginModal(false);
+            } finally {
+              setIsLoggingIn(false);
+            }
+          }}
+          className="w-full bg-white text-black font-bold py-3 rounded-xl btn-squishy disabled:opacity-50 flex justify-center items-center gap-2"
         >
+          {isLoggingIn ? <span className="animate-spin text-xl">↻</span> : null}
           {t(language, 'continueGoogle')}
         </button>
       </Modal>
@@ -206,7 +230,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 
       {/* Notice Popup */}
       <Modal isOpen={showNoticeModal} onClose={() => setShowNoticeModal(false)} title={t(language, 'noticeTitle')}>
-        <p className="text-white/70 text-sm">{notice}</p>
+        <p className="text-white/70 text-sm whitespace-pre-wrap">{notice}</p>
       </Modal>
     </div>
   );
@@ -272,7 +296,16 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     const reverse = text.split('').reverse().join('');
     const matched = words.find((word) => !word.found && (word.word === text || word.word === reverse));
     if (!matched) return;
-    vibrate();
+    vibrate(); // plays 'tap'
+
+    // Check if this was the last word needed to win
+    const remainingWords = words.filter((w) => !w.found).length;
+    if (remainingWords === 1) {
+      playSfx('win');
+    } else {
+      playSfx('found');
+    }
+
     setWords((prev) => prev.map((word) => (word.word === matched.word ? { ...word, found: true } : word)));
     setGrid((prev) => prev.map((cell) => (ids.includes(cell.id) ? { ...cell, found: true } : cell)));
   };
@@ -362,7 +395,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   if (won) return <ResultScreen elapsed={elapsed} onShowHearts={onShowHearts} grid={grid} words={words} />;
 
   return (
-    <div className="flex-1 p-4" onPointerUp={handlePointerUp}>
+    <div className="flex-1 p-4" onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} onPointerCancel={handlePointerUp}>
       <div className="flex items-center justify-between mb-4">
         <div className="bg-[#FF0080]/20 border border-[#FF0080] rounded-full px-3 py-1 text-[#FF0080] font-mono font-bold">{formatTime(elapsed)}</div>
         <div className="flex items-center gap-2">
@@ -393,7 +426,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 
       <div
         className="grid grid-cols-10 gap-1 bg-black/40 p-2 rounded-xl border border-white/10 select-none touch-none"
-        style={{ touchAction: 'none' }}
+        style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
         onPointerMove={handlePointerMove}
       >
         {grid.map((cell) => {
@@ -427,7 +460,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 // 게임 클리어 후 표시되는 화면으로, 소요 시간과 현재 리그에서의 예상 등수,
 // 그리고 완성된 워드서치 그리드 및 친구 초대(공유) 링크 표시 기능을 합니다.
 const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number; onShowHearts: () => void; grid: GridCell[]; words: WordConfig[]; }) => {
-  const { setView, leaderboard, currentUser, language, getReferralLink, consumeHeart } = useStore();
+  const { setView, leaderboard, currentUser, language, getReferralLink, consumeHeart, login } = useStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [cardGenerated, setCardGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -448,7 +481,17 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
         particleCount: 150,
         spread: 80,
         origin: { y: 0.4 },
-        colors: ['#00FFFF', '#FF0080', '#FFD700', '#FFFFFF']
+        colors: ['#00FFFF', '#FF0080', '#FFD700', '#FFFFFF'],
+        zIndex: 50
+      });
+      playSfx('win');
+    } else {
+      confetti({
+        particleCount: 40,
+        spread: 40,
+        origin: { y: 0.6 },
+        colors: ['#FFFFFF', '#FF0080'],
+        zIndex: 50
       });
     }
   }, [elapsed, currentUser?.gameHistory]);
@@ -612,6 +655,16 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
           {t(language, 'share')}
         </button>
       </div>
+
+      {(!currentUser && elapsed < 120000) && (
+        <div className="w-full max-w-[280px] bg-gradient-to-r from-[#00FFFF]/10 to-[#FF0080]/10 border border-[#00FFFF]/30 p-4 rounded-xl mt-4 animate-pulse">
+          <p className="text-white font-bold mb-2">🔥 Amazing Time!</p>
+          <p className="text-white/80 text-xs mb-3">Save your score to the global leaderboard and win genuine prizes!</p>
+          <button onClick={() => { vibrate(); login().then(() => setView('HOME')); }} className="w-full bg-[#00FFFF] text-black font-bold py-2 rounded-lg btn-squishy">
+            Save My Score
+          </button>
+        </div>
+      )}
 
       <button onClick={() => { vibrate(); const ok = consumeHeart(); if (ok) { setView('GAME'); } else { onShowHearts(); setView('HOME'); } }} className="mt-3 text-white/80 underline btn-squishy">{t(language, 'retryGame')}</button>
 
@@ -849,17 +902,21 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
       )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
-        {leaderboard.filter((entry) => !entry.banned).map((entry, index) => (
-          <div key={entry.id} className={`flex items-center p-3 rounded-lg border transition-all ${entry.isCurrentUser ? 'bg-[#FF0080]/20 border-[#FF0080] shadow-[0_0_15px_rgba(255,0,128,0.3)]' : 'bg-white/5 border-transparent hover:bg-white/8'}`}>
-            <div className="w-8 text-lg text-center font-bold">{index < 3 ? ['🥇', '🥈', '🥉'][index] : <span className="text-white/50 text-sm">{entry.rank}</span>}</div>
-            <img src={entry.avatarUrl} alt={entry.nickname} className="w-8 h-8 rounded-full mr-2 border border-white/20" />
-            <div className="mr-2 text-xl" title={entry.country}>{getCountryFlag(entry.country)}</div>
-            <div className="flex-1 min-w-0">
-              <p className={`font-semibold text-sm truncate ${entry.isCurrentUser ? 'text-[#FF0080]' : 'text-white'}`}>{entry.nickname}</p>
+        {leaderboard.filter((entry) => !entry.banned).length === 0 ? (
+          <div className="py-10 text-center text-white/40 text-sm">{t(language, 'noRecordYet')}</div>
+        ) : (
+          leaderboard.filter((entry) => !entry.banned).slice(0, 100).map((entry, index) => (
+            <div key={entry.id} className={`flex items-center p-3 rounded-lg border transition-all ${entry.isCurrentUser ? 'bg-[#FF0080]/20 border-[#FF0080] shadow-[0_0_15px_rgba(255,0,128,0.3)]' : 'bg-white/5 border-transparent hover:bg-white/8'}`}>
+              <div className="w-8 text-lg text-center font-bold">{index < 3 ? ['🥇', '🥈', '🥉'][index] : <span className="text-white/50 text-sm">{entry.rank}</span>}</div>
+              <img src={entry.avatarUrl} alt={entry.nickname} width="40" height="40" className="w-8 h-8 rounded-full mr-2 border border-white/20" />
+              <div className="mr-2 text-xl" title={entry.country}>{getCountryFlag(entry.country)}</div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm truncate ${entry.isCurrentUser ? 'text-[#FF0080]' : 'text-white'}`}>{entry.nickname}</p>
+              </div>
+              <p className="font-mono text-[#00FFFF] text-sm">{formatTime(entry.time)}</p>
             </div>
-            <p className="font-mono text-[#00FFFF] text-sm">{formatTime(entry.time)}</p>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       {currentUser && myEntry && (
@@ -892,7 +949,10 @@ const AdminScreen = () => {
   const [noticeDraft, setNoticeDraft] = useState(notice);
   const [heartDraft, setHeartDraft] = useState(3);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [adminSearchQuery, setAdminSearchQuery] = useState('');
   const [adminSortBy, setAdminSortBy] = useState<'TIME' | 'HEARTS' | 'NEWEST'>('NEWEST');
+
+  if (currentUser?.role !== 'ADMIN') return <div className="flex-1 p-4 flex items-center justify-center text-white/50">Unauthorized Access</div>;
 
   const [botMean, setBotMean] = useState(botConfig.mean / 1000);
   const [botStd, setBotStd] = useState(botConfig.stdDev / 1000);
@@ -946,7 +1006,7 @@ const AdminScreen = () => {
           <p className="text-[#00FFFF] font-semibold mb-2 text-sm flex items-center gap-1">🤖 봇 설정 (Bot Settings)</p>
           <div className="flex items-center gap-2 mb-2">
             <label className="text-white/70 text-xs w-20">평균 시간(초)</label>
-            <input type="number" min="5" max="300" step="1" value={botMean} onChange={e => setBotMean(Number(e.target.value))} className="flex-1 bg-black/30 border border-white/20 text-white rounded px-2 py-1 text-sm outline-none focus:border-[#00FFFF]" />
+            <input type="number" min="10" max="180" step="1" value={botMean} onChange={e => setBotMean(Number(e.target.value))} className="flex-1 bg-black/30 border border-white/20 text-white rounded px-2 py-1 text-sm outline-none focus:border-[#00FFFF]" />
           </div>
           <div className="flex items-center gap-2 mb-2">
             <label className="text-white/70 text-xs w-20">표준편차(초)</label>
@@ -975,21 +1035,48 @@ const AdminScreen = () => {
       <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-2">
         <div className="flex items-center justify-between mb-2">
           <p className="text-white font-semibold">{t(language, 'userManagement')} (Total: {adminUsers.length})</p>
-          <select value={adminSortBy} onChange={(e) => setAdminSortBy(e.target.value as 'TIME' | 'HEARTS' | 'NEWEST')} className="bg-black/30 border border-white/20 text-white/70 text-xs rounded p-1 outline-none">
-            <option value="NEWEST">최신순 (Newest)</option>
-            <option value="TIME">최고기록순 (Best Time)</option>
-            <option value="HEARTS">하트보유순 (Most Hearts)</option>
-          </select>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Search..."
+              value={adminSearchQuery}
+              onChange={e => setAdminSearchQuery(e.target.value)}
+              className="w-24 bg-black/30 border border-white/20 text-white/70 text-xs rounded px-2 outline-none"
+            />
+            <select value={adminSortBy} onChange={(e) => setAdminSortBy(e.target.value as 'TIME' | 'HEARTS' | 'NEWEST')} className="bg-black/30 border border-white/20 text-white/70 text-xs rounded p-1 outline-none">
+              <option value="NEWEST">최신순 (Newest)</option>
+              <option value="TIME">최고기록순 (Best Time)</option>
+              <option value="HEARTS">하트보유순 (Most Hearts)</option>
+            </select>
+          </div>
         </div>
 
         {(() => {
-          const sortedUsers = [...(adminUsers.length > 0 ? adminUsers : leaderboard)].filter(u => !u.banned).sort((a: any, b: any) => {
+          const sortedUsers = [...(adminUsers.length > 0 ? adminUsers : leaderboard)].filter(u => {
+            if (u.banned) return false;
+            // Fuzzy search
+            if (adminSearchQuery) {
+              const q = adminSearchQuery.toLowerCase();
+              const nn = (u.nickname || '').toLowerCase();
+              const id = (u.id || '').toLowerCase();
+              if (!nn.includes(q) && !id.includes(q)) return false;
+            }
+            return true;
+          }).sort((a: any, b: any) => {
             if (adminSortBy === 'TIME') return (a.time || Infinity) - (b.time || Infinity);
             if (adminSortBy === 'HEARTS') return (b.hearts || 0) - (a.hearts || 0);
             const timeA = a.updatedAt ? (typeof a.updatedAt.toMillis === 'function' ? a.updatedAt.toMillis() : new Date(a.updatedAt).getTime()) : 0;
             const timeB = b.updatedAt ? (typeof b.updatedAt.toMillis === 'function' ? b.updatedAt.toMillis() : new Date(b.updatedAt).getTime()) : 0;
             return timeB - timeA;
           });
+
+          if (sortedUsers.length === 0) {
+            return (
+              <div className="flex flex-col items-center justify-center py-8 text-white/40">
+                <p className="text-sm">No users found</p>
+              </div>
+            );
+          }
 
           return sortedUsers.slice(0, 20).map((u) => {
             const entry = u as any;
@@ -1002,7 +1089,7 @@ const AdminScreen = () => {
               <div key={entry.id} className={`flex flex-col bg-black/20 p-2 rounded transition-all ${isSelected ? 'ring-1 ring-[#00FFFF]' : ''}`}>
                 <div className="flex items-center justify-between cursor-pointer" onClick={() => setSelectedUserId(isSelected ? null : entry.id)}>
                   <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <img src={entry.avatarUrl || `https://picsum.photos/seed/${entry.id}/80/80`} className="w-8 h-8 rounded-full flex-shrink-0 border border-white/10" />
+                    <img src={entry.avatarUrl || `https://picsum.photos/seed/${entry.id}/80/80`} width="40" height="40" className="w-8 h-8 rounded-full flex-shrink-0 border border-white/10" />
                     <div className="min-w-0">
                       <p className="text-white text-sm truncate font-bold">{entry.nickname || 'Unknown User'}</p>
                       <div className="flex items-center gap-2 text-white/50 text-[10px]">
@@ -1015,7 +1102,7 @@ const AdminScreen = () => {
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     {currentUser?.id !== entry.id && (
-                      <button onClick={(e) => { e.stopPropagation(); vibrate(); banUser(entry.id); }} className="bg-red-500/20 text-red-500 border border-red-500/50 text-xs px-2 py-1 rounded btn-squishy">BAN</button>
+                      <button onClick={(e) => { e.stopPropagation(); vibrate(); banUser(entry.id); }} className="bg-red-500/20 text-red-500 border border-red-500/50 text-xs px-2 py-1 rounded btn-squishy">🚫 Ban</button>
                     )}
                   </div>
                 </div>
@@ -1237,10 +1324,12 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
     try {
       if (navigator.share) {
         await navigator.share({ title: 'StanBeat', text: 'Can you beat my record? Play StanBeat!', url: link });
-      } else {
+      } else if (navigator.clipboard) {
         await navigator.clipboard.writeText(link);
         setLinkCopied(true);
         setTimeout(() => setLinkCopied(false), 2000);
+      } else {
+        alert('Link copied: ' + link);
       }
     } catch { }
   };
@@ -1253,6 +1342,7 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
             src={iframeUrl}
             className="w-full h-full border-none"
             title="Adscend Media"
+            sandbox="allow-scripts allow-same-origin allow-popups"
             allow="autoplay"
           />
         </div>
@@ -1310,13 +1400,48 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   );
 };
 
+// ─── Offline Toast ────────────────────────────────────────────────
+const OfflineToast = () => {
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  if (!isOffline) return null;
+
+  return (
+    <div className="fixed top-safe z-[3000] w-full flex justify-center py-2 animate-slide-down pointer-events-none">
+      <div className="bg-red-500 text-white px-4 py-2 rounded-full font-bold shadow-[0_0_15px_rgba(239,68,68,0.5)] flex items-center gap-2 text-sm border-2 border-red-400">
+        <span>⚠️ No Internet Connection</span>
+      </div>
+    </div>
+  );
+};
+
 // ─── 메인 앱 컨테이너 컴포넌트 ────────────────────────────────────
 // 전체 앱의 상태(라우팅/뷰)를 관리하고, 언어 자동 감지,
 // 하트 충전 모달, 모바일 레이아웃(하단 정보) 등을 통합 렌더링합니다.
 export default function App() {
-  const { currentView, language, currentUser, initAdscendListener, setLanguage } = useStore();
+  const { currentView, language, currentUser, initAdscendListener, setLanguage, showBrowserBlocker, setShowBrowserBlocker } = useStore();
   const [showLanguageModal, setShowLanguageModal] = useState(false);
   const [showHeartsModal, setShowHeartsModal] = useState(false);
+
+  // Global BeforeInstallPrompt listener
+  useEffect(() => {
+    const handler = (e: any) => {
+      e.preventDefault();
+      useStore.setState({ deferredPrompt: e });
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
 
   // IP 기반 언어 자동 감지
   useEffect(() => {
@@ -1335,8 +1460,23 @@ export default function App() {
     }
   }, [currentUser, initAdscendListener]);
 
+  // Handle browser back button (popstate mapping to SetView)
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      const state = e.state as { view?: any };
+      if (state && state.view) {
+        useStore.setState({ currentView: state.view });
+      } else {
+        useStore.setState({ currentView: 'HOME' });
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   return (
     <Layout onOpenLanguage={() => setShowLanguageModal(true)} onOpenHearts={() => setShowHeartsModal(true)}>
+      <OfflineToast />
       {currentView === 'HOME' && <HomeScreen onShowHearts={() => setShowHeartsModal(true)} />}
       {currentView === 'GAME' && <GameScreen onShowHearts={() => setShowHeartsModal(true)} />}
       {currentView === 'LEADERBOARD' && <LeaderboardScreen onShowHearts={() => setShowHeartsModal(true)} />}
@@ -1345,6 +1485,14 @@ export default function App() {
 
       <LanguageModal isOpen={showLanguageModal} onClose={() => setShowLanguageModal(false)} />
       <HeartsModal isOpen={showHeartsModal} onClose={() => setShowHeartsModal(false)} />
+
+      {/* In-App Browser Blocker Modal */}
+      <Modal isOpen={showBrowserBlocker} onClose={() => setShowBrowserBlocker(false)} title="Browser Not Supported">
+        <p className="text-white/80 text-sm mb-4 text-center">Google Login is blocked in in-app browsers (Instagram, Facebook, etc). Please copy the link and open it in Safari or Chrome.</p>
+        <button onClick={() => { vibrate(); navigator.clipboard.writeText('https://stanbeat.web.app').then(() => alert('Link copied! Paste in Chrome/Safari.')); }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy text-lg">
+          Copy Link URL
+        </button>
+      </Modal>
 
       {(currentView === 'HOME' || currentView === 'LEADERBOARD') && (
         <footer className="bg-[#050208] p-4 text-center border-t border-white/10">

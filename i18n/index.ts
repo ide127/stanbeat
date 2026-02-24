@@ -71,8 +71,8 @@ const dictionaries: Record<LanguageCode, Messages> = {
 };
 
 export const t = (lang: LanguageCode, key: MessageKey, vars?: Record<string, string>) => {
-  const table = dictionaries[lang] ?? dictionaries.ko;
-  let value = table[key] ?? baseMessages[key];
+  const table = dictionaries[lang] ?? dictionaries.en ?? dictionaries.ko;
+  let value = table[key] ?? dictionaries.en[key] ?? baseMessages[key];
   if (vars) {
     Object.entries(vars).forEach(([k, v]) => {
       value = value.replaceAll(`{${k}}`, v);
