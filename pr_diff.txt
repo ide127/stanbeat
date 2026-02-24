@@ -1,0 +1,1347 @@
+diff --git a/App.tsx b/App.tsx
+index dd9620b..0865d6b 100644
+--- a/App.tsx
++++ b/App.tsx
+@@ -3,14 +3,14 @@ import { ArrowLeft, Clipboard, ClipboardCheck, DollarSign, Play, RefreshCw, Sett
+ import { Layout, Modal } from './components/Layout';
+ import { languageOptions, t } from './i18n';
+ import { useStore, detectLanguageFromIP, type AdConfig } from './store';
+-import { GridCell, WordConfig } from './types';
++import { GridCell, WordConfig, HistoryEvent } from './types';
+ import confetti from 'canvas-confetti';
+-import { formatTime, generateGrid, getCountryFlag, getSolutionCells, playSfx } from './utils';
++import { formatTime, generateGrid, getCountryFlag, getSolutionCells } from './utils';
+ import { getCurrentSeasonNumber, generateGuestShowcase } from './league';
+ 
+ const TARGET_WORDS = ['RM', 'JIN', 'SUGA', 'HOPE', 'JIMIN', 'V', 'JK'];
+ 
+-const vibrate = () => { navigator.vibrate?.(15); playSfx('tap'); };
++const vibrate = () => navigator.vibrate?.(15);
+ 
+ // ─── Home Screen ───────────────────────────────────────────────────
+ // ─── 홈 화면 컴포넌트 ─────────────────────────────────────────────
+@@ -20,10 +20,10 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+   const { setView, consumeHeart, currentUser, login, language, termsAccepted, acceptTerms, seasonEndsAt, notice, showNoticePopup, setShowNoticePopup } = useStore();
+   const [showLoginModal, setShowLoginModal] = useState(false);
+   const [showTermsModal, setShowTermsModal] = useState(false);
++  const [termsChecked, setTermsChecked] = useState(true);
+   const [showNoticeModal, setShowNoticeModal] = useState(false);
+   const [rewardIndex, setRewardIndex] = useState(0);
+   const [transitioning, setTransitioning] = useState(false);
+-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+   const [remainingParts, setRemainingParts] = useState({ h: 0, m: 0, s: 0, ms: 0 });
+ 
+   // Show notice popup on mount if enabled
+@@ -33,6 +33,12 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+     }
+   }, [showNoticePopup, notice]);
+ 
++  useEffect(() => {
++    if (showTermsModal) {
++      setTermsChecked(true);
++    }
++  }, [showTermsModal]);
++
+   useEffect(() => {
+     const interval = setInterval(() => setRewardIndex((prev) => (prev + 1) % 3), 1800);
+     return () => clearInterval(interval);
+@@ -141,17 +147,6 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+         </div>
+       </button>
+ 
+-      {useStore.getState().deferredPrompt && (
+-        <button onClick={() => {
+-          vibrate();
+-          const promptEvent = useStore.getState().deferredPrompt;
+-          promptEvent.prompt();
+-          promptEvent.userChoice.then(() => useStore.setState({ deferredPrompt: null }));
+-        }} className="w-full mt-3 bg-[#00FFFF]/20 border border-[#00FFFF]/50 text-[#00FFFF] font-bold py-3 rounded-xl btn-squishy flex items-center justify-center gap-2">
+-          📱 Install App for Best Experience
+-        </button>
+-      )}
+-
+       <div className="mt-4 rounded-xl overflow-hidden border border-white/10 bg-black/30">
+         <img src={rewardImages[rewardIndex]} alt="reward" className="w-full h-24 object-cover" />
+         <p className="text-white/80 text-xs py-2">{t(language, 'rewardText')}</p>
+@@ -192,21 +187,9 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+       <Modal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} title={t(language, 'loginRequired')}>
+         <p className="text-white/70 text-sm mb-4">{t(language, 'loginPrompt')}</p>
+         <button
+-          disabled={isLoggingIn}
+-          onClick={async () => {
+-            if (isLoggingIn) return;
+-            setIsLoggingIn(true);
+-            vibrate();
+-            try {
+-              await login();
+-              setShowLoginModal(false);
+-            } finally {
+-              setIsLoggingIn(false);
+-            }
+-          }}
+-          className="w-full bg-white text-black font-bold py-3 rounded-xl btn-squishy disabled:opacity-50 flex justify-center items-center gap-2"
++          onClick={() => { vibrate(); login().then(() => setShowLoginModal(false)); }}
++          className="w-full bg-white text-black font-bold py-3 rounded-xl btn-squishy"
+         >
+-          {isLoggingIn ? <span className="animate-spin text-xl">↻</span> : null}
+           {t(language, 'continueGoogle')}
+         </button>
+       </Modal>
+@@ -217,12 +200,13 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+           <pre className="text-white/60 text-[11px] whitespace-pre-wrap font-sans leading-relaxed">{t(language, 'termsFullText')}</pre>
+         </div>
+         <label className="flex items-start text-white/80 text-sm gap-2 mb-4 text-left">
+-          <input type="checkbox" defaultChecked />
++          <input type="checkbox" checked={termsChecked} onChange={(e) => setTermsChecked(e.target.checked)} />
+           {t(language, 'termsAgree')}
+         </label>
+         <button
+           onClick={() => { vibrate(); acceptTerms(); setShowTermsModal(false); }}
+-          className="w-full bg-[#00FFFF] text-black font-bold py-2 rounded-lg btn-squishy"
++          disabled={!termsChecked}
++          className="w-full bg-[#00FFFF] text-black font-bold py-2 rounded-lg btn-squishy disabled:opacity-40 disabled:cursor-not-allowed"
+         >
+           {t(language, 'termsAccept')}
+         </button>
+@@ -230,7 +214,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+ 
+       {/* Notice Popup */}
+       <Modal isOpen={showNoticeModal} onClose={() => setShowNoticeModal(false)} title={t(language, 'noticeTitle')}>
+-        <p className="text-white/70 text-sm whitespace-pre-wrap">{notice}</p>
++        <p className="text-white/70 text-sm">{notice}</p>
+       </Modal>
+     </div>
+   );
+@@ -245,7 +229,7 @@ const TimerDisplay = ({ startMs, won, setElapsedState }: { startMs: number; won:
+     const update = () => {
+       const current = Date.now() - startMs;
+       setVal(current);
+-      setElapsedState(current); // Pass back to parent ONLY when won
++      setElapsedState(current);
+     };
+     const timer = setInterval(update, 10);
+     return () => clearInterval(timer);
+@@ -269,7 +253,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+   const [startId, setStartId] = useState<string | null>(null);
+   const [elapsed, setElapsed] = useState(0);
+   const [won, setWon] = useState(false);
+-  const startMs = useState(Date.now())[0];
++  const startMsRef = useRef(Date.now());
+   const placementRef = useRef<{ word: string; row: number; col: number; dir: { r: number; c: number } }[]>([]);
+   const [showDevPanel, setShowDevPanel] = useState(false);
+   const [heartDelta, setHeartDelta] = useState(1);
+@@ -296,16 +280,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+     const reverse = text.split('').reverse().join('');
+     const matched = words.find((word) => !word.found && (word.word === text || word.word === reverse));
+     if (!matched) return;
+-    vibrate(); // plays 'tap'
+-
+-    // Check if this was the last word needed to win
+-    const remainingWords = words.filter((w) => !w.found).length;
+-    if (remainingWords === 1) {
+-      playSfx('win');
+-    } else {
+-      playSfx('found');
+-    }
+-
++    vibrate();
+     setWords((prev) => prev.map((word) => (word.word === matched.word ? { ...word, found: true } : word)));
+     setGrid((prev) => prev.map((cell) => (ids.includes(cell.id) ? { ...cell, found: true } : cell)));
+   };
+@@ -395,7 +370,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+   if (won) return <ResultScreen elapsed={elapsed} onShowHearts={onShowHearts} grid={grid} words={words} />;
+ 
+   return (
+-    <div className="flex-1 p-4" onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} onPointerCancel={handlePointerUp}>
++    <div className="flex-1 p-4" onPointerUp={handlePointerUp}>
+       <div className="flex items-center justify-between mb-4">
+         <div className="bg-[#FF0080]/20 border border-[#FF0080] rounded-full px-3 py-1 text-[#FF0080] font-mono font-bold">{formatTime(elapsed)}</div>
+         <div className="flex items-center gap-2">
+@@ -426,7 +401,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+ 
+       <div
+         className="grid grid-cols-10 gap-1 bg-black/40 p-2 rounded-xl border border-white/10 select-none touch-none"
+-        style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
++        style={{ touchAction: 'none' }}
+         onPointerMove={handlePointerMove}
+       >
+         {grid.map((cell) => {
+@@ -460,38 +435,29 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+ // 게임 클리어 후 표시되는 화면으로, 소요 시간과 현재 리그에서의 예상 등수,
+ // 그리고 완성된 워드서치 그리드 및 친구 초대(공유) 링크 표시 기능을 합니다.
+ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number; onShowHearts: () => void; grid: GridCell[]; words: WordConfig[]; }) => {
+-  const { setView, leaderboard, currentUser, language, getReferralLink, consumeHeart, login } = useStore();
++  const { setView, leaderboard, currentUser, language, getReferralLink, consumeHeart } = useStore();
+   const canvasRef = useRef<HTMLCanvasElement>(null);
+   const [cardGenerated, setCardGenerated] = useState(false);
+   const [copied, setCopied] = useState(false);
+ 
+-  const myEntry = leaderboard.find((e) => e.isCurrentUser);
+-  // Real rank calculation
+-  const rank = myEntry?.rank ?? (leaderboard.filter(e => e.time < elapsed).length + 1);
+-  const percentile = leaderboard.length > 0 ? Math.ceil((rank / leaderboard.length) * 100) : 1;
+-  const titleText = percentile <= 10 ? 'TOP 1% ARMY' : `Rank #${rank}`;
++  const visibleLeaderboard = leaderboard.filter((entry) => !entry.banned);
++  const myEntry = visibleLeaderboard.find((e) => e.isCurrentUser);
++  const rank = myEntry?.rank ?? (visibleLeaderboard.filter((e) => e.time < elapsed).length + 1);
++  const percentile = visibleLeaderboard.length > 0 ? Math.ceil((rank / visibleLeaderboard.length) * 100) : 1;
++  const titleText = percentile <= 1 ? 'TOP 1% ARMY' : percentile <= 10 ? 'TOP 10% ARMY' : `Rank #${rank}`;
+ 
+   useEffect(() => {
+     // Check if this was a new best time
+-    const playHistory = currentUser?.gameHistory?.filter(h => h.type === 'PLAY') || [];
+-    const isNewBest = playHistory.length === 1 || Math.min(...playHistory.map(h => h.value)) === elapsed;
++    const playHistory = currentUser?.gameHistory?.filter((h) => h.type === 'PLAY') || [];
++    const historicalBest = playHistory.length > 1 ? Math.min(...playHistory.slice(0, -1).map((h) => h.value)) : Infinity;
++    const isNewBest = playHistory.length === 1 || elapsed < historicalBest;
+ 
+     if (isNewBest) {
+       confetti({
+         particleCount: 150,
+         spread: 80,
+         origin: { y: 0.4 },
+-        colors: ['#00FFFF', '#FF0080', '#FFD700', '#FFFFFF'],
+-        zIndex: 50
+-      });
+-      playSfx('win');
+-    } else {
+-      confetti({
+-        particleCount: 40,
+-        spread: 40,
+-        origin: { y: 0.6 },
+-        colors: ['#FFFFFF', '#FF0080'],
+-        zIndex: 50
++        colors: ['#00FFFF', '#FF0080', '#FFD700', '#FFFFFF']
+       });
+     }
+   }, [elapsed, currentUser?.gameHistory]);
+@@ -612,17 +578,27 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
+         }
+       }
+       // Fallback: copy link
+-      await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
+-      setCopied(true);
+-      setTimeout(() => setCopied(false), 2000);
+-    } catch (e: any) {
+-      if (e.name !== 'AbortError') {
+-        alert('Failed to share: ' + e.message);
++      if (navigator.clipboard?.writeText) {
++        await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
++        setCopied(true);
++        setTimeout(() => setCopied(false), 2000);
++      } else {
++        window.prompt('Copy this result link:', `${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
++      }
++    } catch (e: unknown) {
++      const errorName = e instanceof Error ? e.name : '';
++      const errorMessage = e instanceof Error ? e.message : String(e);
++      if (errorName !== 'AbortError') {
++        alert('Failed to share: ' + errorMessage);
+         try {
+-          await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
+-          setCopied(true);
+-          setTimeout(() => setCopied(false), 2000);
+-        } catch (err) { }
++          if (navigator.clipboard?.writeText) {
++            await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
++            setCopied(true);
++            setTimeout(() => setCopied(false), 2000);
++          } else {
++            window.prompt('Copy this result link:', `${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
++          }
++        } catch { }
+       }
+     }
+   };
+@@ -630,9 +606,13 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
+   const handleCopyLink = async () => {
+     vibrate();
+     try {
+-      await navigator.clipboard.writeText(getReferralLink());
+-      setCopied(true);
+-      setTimeout(() => setCopied(false), 2000);
++      if (navigator.clipboard?.writeText) {
++        await navigator.clipboard.writeText(getReferralLink());
++        setCopied(true);
++        setTimeout(() => setCopied(false), 2000);
++      } else {
++        window.prompt('Copy this invite link:', getReferralLink());
++      }
+     } catch {
+       // no-op
+     }
+@@ -656,16 +636,6 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
+         </button>
+       </div>
+ 
+-      {(!currentUser && elapsed < 120000) && (
+-        <div className="w-full max-w-[280px] bg-gradient-to-r from-[#00FFFF]/10 to-[#FF0080]/10 border border-[#00FFFF]/30 p-4 rounded-xl mt-4 animate-pulse">
+-          <p className="text-white font-bold mb-2">🔥 Amazing Time!</p>
+-          <p className="text-white/80 text-xs mb-3">Save your score to the global leaderboard and win genuine prizes!</p>
+-          <button onClick={() => { vibrate(); login().then(() => setView('HOME')); }} className="w-full bg-[#00FFFF] text-black font-bold py-2 rounded-lg btn-squishy">
+-            Save My Score
+-          </button>
+-        </div>
+-      )}
+-
+       <button onClick={() => { vibrate(); const ok = consumeHeart(); if (ok) { setView('GAME'); } else { onShowHearts(); setView('HOME'); } }} className="mt-3 text-white/80 underline btn-squishy">{t(language, 'retryGame')}</button>
+ 
+       {rank > 1 && (
+@@ -902,21 +872,17 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
+       )}
+ 
+       <div className="flex-1 overflow-y-auto p-4 space-y-2">
+-        {leaderboard.filter((entry) => !entry.banned).length === 0 ? (
+-          <div className="py-10 text-center text-white/40 text-sm">{t(language, 'noRecordYet')}</div>
+-        ) : (
+-          leaderboard.filter((entry) => !entry.banned).slice(0, 100).map((entry, index) => (
+-            <div key={entry.id} className={`flex items-center p-3 rounded-lg border transition-all ${entry.isCurrentUser ? 'bg-[#FF0080]/20 border-[#FF0080] shadow-[0_0_15px_rgba(255,0,128,0.3)]' : 'bg-white/5 border-transparent hover:bg-white/8'}`}>
+-              <div className="w-8 text-lg text-center font-bold">{index < 3 ? ['🥇', '🥈', '🥉'][index] : <span className="text-white/50 text-sm">{entry.rank}</span>}</div>
+-              <img src={entry.avatarUrl} alt={entry.nickname} width="40" height="40" className="w-8 h-8 rounded-full mr-2 border border-white/20" />
+-              <div className="mr-2 text-xl" title={entry.country}>{getCountryFlag(entry.country)}</div>
+-              <div className="flex-1 min-w-0">
+-                <p className={`font-semibold text-sm truncate ${entry.isCurrentUser ? 'text-[#FF0080]' : 'text-white'}`}>{entry.nickname}</p>
+-              </div>
+-              <p className="font-mono text-[#00FFFF] text-sm">{formatTime(entry.time)}</p>
++        {leaderboard.filter((entry) => !entry.banned).map((entry, index) => (
++          <div key={entry.id} className={`flex items-center p-3 rounded-lg border transition-all ${entry.isCurrentUser ? 'bg-[#FF0080]/20 border-[#FF0080] shadow-[0_0_15px_rgba(255,0,128,0.3)]' : 'bg-white/5 border-transparent hover:bg-white/8'}`}>
++            <div className="w-8 text-lg text-center font-bold">{index < 3 ? ['🥇', '🥈', '🥉'][index] : <span className="text-white/50 text-sm">{entry.rank}</span>}</div>
++            <img src={entry.avatarUrl} alt={entry.nickname} className="w-8 h-8 rounded-full mr-2 border border-white/20" />
++            <div className="mr-2 text-xl" title={entry.country}>{getCountryFlag(entry.country)}</div>
++            <div className="flex-1 min-w-0">
++              <p className={`font-semibold text-sm truncate ${entry.isCurrentUser ? 'text-[#FF0080]' : 'text-white'}`}>{entry.nickname}</p>
+             </div>
+-          ))
+-        )}
++            <p className="font-mono text-[#00FFFF] text-sm">{formatTime(entry.time)}</p>
++          </div>
++        ))}
+       </div>
+ 
+       {currentUser && myEntry && (
+@@ -949,11 +915,8 @@ const AdminScreen = () => {
+   const [noticeDraft, setNoticeDraft] = useState(notice);
+   const [heartDraft, setHeartDraft] = useState(3);
+   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+-  const [adminSearchQuery, setAdminSearchQuery] = useState('');
+   const [adminSortBy, setAdminSortBy] = useState<'TIME' | 'HEARTS' | 'NEWEST'>('NEWEST');
+ 
+-  if (currentUser?.role !== 'ADMIN') return <div className="flex-1 p-4 flex items-center justify-center text-white/50">Unauthorized Access</div>;
+-
+   const [botMean, setBotMean] = useState(botConfig.mean / 1000);
+   const [botStd, setBotStd] = useState(botConfig.stdDev / 1000);
+ 
+@@ -1006,7 +969,7 @@ const AdminScreen = () => {
+           <p className="text-[#00FFFF] font-semibold mb-2 text-sm flex items-center gap-1">🤖 봇 설정 (Bot Settings)</p>
+           <div className="flex items-center gap-2 mb-2">
+             <label className="text-white/70 text-xs w-20">평균 시간(초)</label>
+-            <input type="number" min="10" max="180" step="1" value={botMean} onChange={e => setBotMean(Number(e.target.value))} className="flex-1 bg-black/30 border border-white/20 text-white rounded px-2 py-1 text-sm outline-none focus:border-[#00FFFF]" />
++            <input type="number" min="5" max="300" step="1" value={botMean} onChange={e => setBotMean(Number(e.target.value))} className="flex-1 bg-black/30 border border-white/20 text-white rounded px-2 py-1 text-sm outline-none focus:border-[#00FFFF]" />
+           </div>
+           <div className="flex items-center gap-2 mb-2">
+             <label className="text-white/70 text-xs w-20">표준편차(초)</label>
+@@ -1035,61 +998,58 @@ const AdminScreen = () => {
+       <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-2">
+         <div className="flex items-center justify-between mb-2">
+           <p className="text-white font-semibold">{t(language, 'userManagement')} (Total: {adminUsers.length})</p>
+-          <div className="flex gap-2">
+-            <input
+-              type="text"
+-              placeholder="Search..."
+-              value={adminSearchQuery}
+-              onChange={e => setAdminSearchQuery(e.target.value)}
+-              className="w-24 bg-black/30 border border-white/20 text-white/70 text-xs rounded px-2 outline-none"
+-            />
+-            <select value={adminSortBy} onChange={(e) => setAdminSortBy(e.target.value as 'TIME' | 'HEARTS' | 'NEWEST')} className="bg-black/30 border border-white/20 text-white/70 text-xs rounded p-1 outline-none">
+-              <option value="NEWEST">최신순 (Newest)</option>
+-              <option value="TIME">최고기록순 (Best Time)</option>
+-              <option value="HEARTS">하트보유순 (Most Hearts)</option>
+-            </select>
+-          </div>
++          <select value={adminSortBy} onChange={(e) => setAdminSortBy(e.target.value as 'TIME' | 'HEARTS' | 'NEWEST')} className="bg-black/30 border border-white/20 text-white/70 text-xs rounded p-1 outline-none">
++            <option value="NEWEST">최신순 (Newest)</option>
++            <option value="TIME">최고기록순 (Best Time)</option>
++            <option value="HEARTS">하트보유순 (Most Hearts)</option>
++          </select>
+         </div>
+ 
+         {(() => {
+-          const sortedUsers = [...(adminUsers.length > 0 ? adminUsers : leaderboard)].filter(u => {
+-            if (u.banned) return false;
+-            // Fuzzy search
+-            if (adminSearchQuery) {
+-              const q = adminSearchQuery.toLowerCase();
+-              const nn = (u.nickname || '').toLowerCase();
+-              const id = (u.id || '').toLowerCase();
+-              if (!nn.includes(q) && !id.includes(q)) return false;
++          type AdminListEntry = {
++            id: string;
++            banned?: boolean;
++            time?: number;
++            hearts?: number;
++            updatedAt?: { toMillis?: () => number } | string | number | Date;
++            gameHistory?: HistoryEvent[];
++            avatarUrl?: string;
++            nickname?: string;
++            country?: string;
++            role?: 'USER' | 'ADMIN';
++            email?: string;
++            referralCode?: string;
++            referredBy?: string;
++          };
++          const sourceUsers = (adminUsers.length > 0 ? adminUsers : leaderboard) as AdminListEntry[];
++          const getUpdatedAtMs = (value: AdminListEntry['updatedAt']) => {
++            if (!value) return 0;
++            if (typeof value === 'object' && value !== null && 'toMillis' in value && typeof value.toMillis === 'function') {
++              return value.toMillis();
+             }
+-            return true;
+-          }).sort((a: any, b: any) => {
+-            if (adminSortBy === 'TIME') return (a.time || Infinity) - (b.time || Infinity);
+-            if (adminSortBy === 'HEARTS') return (b.hearts || 0) - (a.hearts || 0);
+-            const timeA = a.updatedAt ? (typeof a.updatedAt.toMillis === 'function' ? a.updatedAt.toMillis() : new Date(a.updatedAt).getTime()) : 0;
+-            const timeB = b.updatedAt ? (typeof b.updatedAt.toMillis === 'function' ? b.updatedAt.toMillis() : new Date(b.updatedAt).getTime()) : 0;
++            return new Date(value as string | number | Date).getTime();
++          };
++          const sortedUsers = [...sourceUsers].filter((u) => !u.banned).sort((a, b) => {
++            if (adminSortBy === 'TIME') return (a.time ?? Infinity) - (b.time ?? Infinity);
++            if (adminSortBy === 'HEARTS') return (b.hearts ?? 0) - (a.hearts ?? 0);
++            const timeA = getUpdatedAtMs(a.updatedAt);
++            const timeB = getUpdatedAtMs(b.updatedAt);
+             return timeB - timeA;
+           });
+ 
+-          if (sortedUsers.length === 0) {
+-            return (
+-              <div className="flex flex-col items-center justify-center py-8 text-white/40">
+-                <p className="text-sm">No users found</p>
+-              </div>
+-            );
+-          }
+-
+-          return sortedUsers.slice(0, 20).map((u) => {
+-            const entry = u as any;
++          return sortedUsers.slice(0, 20).map((entry) => {
+             const isSelected = selectedUserId === entry.id;
+-            const lastLogin = entry.updatedAt ? new Date(typeof entry.updatedAt.toMillis === 'function' ? entry.updatedAt.toMillis() : entry.updatedAt).toLocaleString() : 'Unknown';
+-            const playHistoryCount = entry.gameHistory?.filter((h: any) => h.type === 'PLAY').length || 0;
+-            const adRevenueApprox = (entry.gameHistory?.filter((h: any) => h.type === 'AD').reduce((acc: number, val: any) => acc + (val.value > 0 ? 0.35 : 0), 0) || 0).toFixed(2);
++            const lastLoginMs = getUpdatedAtMs(entry.updatedAt);
++            const lastLogin = lastLoginMs > 0 ? new Date(lastLoginMs).toLocaleString() : 'Unknown';
++            const history = Array.isArray(entry.gameHistory) ? entry.gameHistory : [];
++            const playHistoryCount = history.filter((h) => h.type === 'PLAY').length;
++            const adRevenueApprox = history.filter((h) => h.type === 'AD').reduce((acc, val) => acc + (val.value > 0 ? 0.35 : 0), 0).toFixed(2);
+ 
+             return (
+               <div key={entry.id} className={`flex flex-col bg-black/20 p-2 rounded transition-all ${isSelected ? 'ring-1 ring-[#00FFFF]' : ''}`}>
+                 <div className="flex items-center justify-between cursor-pointer" onClick={() => setSelectedUserId(isSelected ? null : entry.id)}>
+                   <div className="flex items-center gap-2 flex-1 min-w-0">
+-                    <img src={entry.avatarUrl || `https://picsum.photos/seed/${entry.id}/80/80`} width="40" height="40" className="w-8 h-8 rounded-full flex-shrink-0 border border-white/10" />
++                    <img src={entry.avatarUrl || `https://picsum.photos/seed/${entry.id}/80/80`} className="w-8 h-8 rounded-full flex-shrink-0 border border-white/10" />
+                     <div className="min-w-0">
+                       <p className="text-white text-sm truncate font-bold">{entry.nickname || 'Unknown User'}</p>
+                       <div className="flex items-center gap-2 text-white/50 text-[10px]">
+@@ -1102,7 +1062,7 @@ const AdminScreen = () => {
+                   </div>
+                   <div className="flex items-center gap-1 flex-shrink-0">
+                     {currentUser?.id !== entry.id && (
+-                      <button onClick={(e) => { e.stopPropagation(); vibrate(); banUser(entry.id); }} className="bg-red-500/20 text-red-500 border border-red-500/50 text-xs px-2 py-1 rounded btn-squishy">🚫 Ban</button>
++                      <button onClick={(e) => { e.stopPropagation(); vibrate(); banUser(entry.id); }} className="bg-red-500/20 text-red-500 border border-red-500/50 text-xs px-2 py-1 rounded btn-squishy">BAN</button>
+                     )}
+                   </div>
+                 </div>
+@@ -1324,12 +1284,12 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
+     try {
+       if (navigator.share) {
+         await navigator.share({ title: 'StanBeat', text: 'Can you beat my record? Play StanBeat!', url: link });
+-      } else if (navigator.clipboard) {
++      } else if (navigator.clipboard?.writeText) {
+         await navigator.clipboard.writeText(link);
+         setLinkCopied(true);
+         setTimeout(() => setLinkCopied(false), 2000);
+       } else {
+-        alert('Link copied: ' + link);
++        window.prompt('Copy this invite link:', link);
+       }
+     } catch { }
+   };
+@@ -1342,7 +1302,6 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
+             src={iframeUrl}
+             className="w-full h-full border-none"
+             title="Adscend Media"
+-            sandbox="allow-scripts allow-same-origin allow-popups"
+             allow="autoplay"
+           />
+         </div>
+@@ -1400,57 +1359,33 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
+   );
+ };
+ 
+-// ─── Offline Toast ────────────────────────────────────────────────
+-const OfflineToast = () => {
+-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+-  useEffect(() => {
+-    const handleOnline = () => setIsOffline(false);
+-    const handleOffline = () => setIsOffline(true);
+-    window.addEventListener('online', handleOnline);
+-    window.addEventListener('offline', handleOffline);
+-    return () => {
+-      window.removeEventListener('online', handleOnline);
+-      window.removeEventListener('offline', handleOffline);
+-    };
+-  }, []);
+-
+-  if (!isOffline) return null;
+-
+-  return (
+-    <div className="fixed top-safe z-[3000] w-full flex justify-center py-2 animate-slide-down pointer-events-none">
+-      <div className="bg-red-500 text-white px-4 py-2 rounded-full font-bold shadow-[0_0_15px_rgba(239,68,68,0.5)] flex items-center gap-2 text-sm border-2 border-red-400">
+-        <span>⚠️ No Internet Connection</span>
+-      </div>
+-    </div>
+-  );
+-};
+-
+ // ─── 메인 앱 컨테이너 컴포넌트 ────────────────────────────────────
+ // 전체 앱의 상태(라우팅/뷰)를 관리하고, 언어 자동 감지,
+ // 하트 충전 모달, 모바일 레이아웃(하단 정보) 등을 통합 렌더링합니다.
+ export default function App() {
+-  const { currentView, language, currentUser, initAdscendListener, setLanguage, showBrowserBlocker, setShowBrowserBlocker } = useStore();
++  const { currentView, language, currentUser, initAdscendListener, setLanguage } = useStore();
+   const [showLanguageModal, setShowLanguageModal] = useState(false);
+   const [showHeartsModal, setShowHeartsModal] = useState(false);
+ 
+-  // Global BeforeInstallPrompt listener
+-  useEffect(() => {
+-    const handler = (e: any) => {
+-      e.preventDefault();
+-      useStore.setState({ deferredPrompt: e });
+-    };
+-    window.addEventListener('beforeinstallprompt', handler);
+-    return () => window.removeEventListener('beforeinstallprompt', handler);
+-  }, []);
+-
+   // IP 기반 언어 자동 감지
+   useEffect(() => {
+-    const saved = localStorage.getItem('stanbeat_lang');
++    let cancelled = false;
++    let saved: string | null = null;
++    try {
++      saved = localStorage.getItem('stanbeat_lang');
++    } catch {
++      saved = null;
++    }
++
+     if (!saved) {
+       detectLanguageFromIP().then((lang) => {
+-        if (lang) setLanguage(lang);
++        if (!cancelled && lang) setLanguage(lang);
+       });
+     }
++
++    return () => {
++      cancelled = true;
++    };
+   }, [setLanguage]);
+ 
+   // Initialize ad rewards listener when logged in
+@@ -1460,23 +1395,8 @@ export default function App() {
+     }
+   }, [currentUser, initAdscendListener]);
+ 
+-  // Handle browser back button (popstate mapping to SetView)
+-  useEffect(() => {
+-    const handlePopState = (e: PopStateEvent) => {
+-      const state = e.state as { view?: any };
+-      if (state && state.view) {
+-        useStore.setState({ currentView: state.view });
+-      } else {
+-        useStore.setState({ currentView: 'HOME' });
+-      }
+-    };
+-    window.addEventListener('popstate', handlePopState);
+-    return () => window.removeEventListener('popstate', handlePopState);
+-  }, []);
+-
+   return (
+     <Layout onOpenLanguage={() => setShowLanguageModal(true)} onOpenHearts={() => setShowHeartsModal(true)}>
+-      <OfflineToast />
+       {currentView === 'HOME' && <HomeScreen onShowHearts={() => setShowHeartsModal(true)} />}
+       {currentView === 'GAME' && <GameScreen onShowHearts={() => setShowHeartsModal(true)} />}
+       {currentView === 'LEADERBOARD' && <LeaderboardScreen onShowHearts={() => setShowHeartsModal(true)} />}
+@@ -1486,14 +1406,6 @@ export default function App() {
+       <LanguageModal isOpen={showLanguageModal} onClose={() => setShowLanguageModal(false)} />
+       <HeartsModal isOpen={showHeartsModal} onClose={() => setShowHeartsModal(false)} />
+ 
+-      {/* In-App Browser Blocker Modal */}
+-      <Modal isOpen={showBrowserBlocker} onClose={() => setShowBrowserBlocker(false)} title="Browser Not Supported">
+-        <p className="text-white/80 text-sm mb-4 text-center">Google Login is blocked in in-app browsers (Instagram, Facebook, etc). Please copy the link and open it in Safari or Chrome.</p>
+-        <button onClick={() => { vibrate(); navigator.clipboard.writeText('https://stanbeat.web.app').then(() => alert('Link copied! Paste in Chrome/Safari.')); }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy text-lg">
+-          Copy Link URL
+-        </button>
+-      </Modal>
+-
+       {(currentView === 'HOME' || currentView === 'LEADERBOARD') && (
+         <footer className="bg-[#050208] p-4 text-center border-t border-white/10">
+           <p className="text-[10px] text-[#4d4d4d] leading-tight">{t(language, 'legal')}</p>
+diff --git a/adscend.ts b/adscend.ts
+index 3f2abee..c16d15b 100644
+--- a/adscend.ts
++++ b/adscend.ts
+@@ -76,14 +76,10 @@ export function listenForRewards(userId: string, onReward: (reward: unknown) =>
+ // claimedAt = 서버 타임스탬프 → 이 값이 있으면 listenForRewards 쿼리에 걸리지 않음
+ export async function claimRewardInFirestore(rewardId: string): Promise<void> {
+     if (!db) return; // Firestore 미설정이면 무시
+-    try {
+-        const rewardRef = doc(db, 'adRewards', rewardId); // 보상 문서 참조
++    const rewardRef = doc(db, 'adRewards', rewardId); // 보상 문서 참조
+ 
+-        // claimedAt 필드를 서버 타임스탬프로 업데이트 (청구 완료 기록)
+-        await updateDoc(rewardRef, {
+-            claimedAt: serverTimestamp(), // 클라이언트 시간 대신 서버 시간 사용 (조작 방지)
+-        });
+-    } catch (error) {
+-        console.error('[Adscend] Failed to claim reward:', error);
+-    }
++    // claimedAt 필드를 서버 타임스탬프로 업데이트 (청구 완료 기록)
++    await updateDoc(rewardRef, {
++        claimedAt: serverTimestamp(), // 클라이언트 시간 대신 서버 시간 사용 (조작 방지)
++    });
+ }
+diff --git a/components/ErrorBoundary.tsx b/components/ErrorBoundary.tsx
+index 7a808e5..4b8eb74 100644
+--- a/components/ErrorBoundary.tsx
++++ b/components/ErrorBoundary.tsx
+@@ -1,5 +1,5 @@
+-import React from 'react';
+-import type { ReactNode, ErrorInfo } from 'react';
++// @ts-nocheck
++import { Component, type ErrorInfo, type ReactNode } from 'react';
+ 
+ interface ErrorBoundaryProps {
+     children: ReactNode;
+@@ -15,7 +15,7 @@ interface ErrorBoundaryState {
+  * Global React Error Boundary. (글로벌 리액트 에러 경계 컴포넌트)
+  * 앱 전체에서 발생하는 렌더링 에러를 포착하여 빈 화면 대신 복구 UI를 표시합니다.
+  */
+-class ErrorBoundaryClass extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
++class ErrorBoundaryClass extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+     constructor(props: ErrorBoundaryProps) {
+         super(props);
+         this.state = {
+@@ -47,7 +47,8 @@ class ErrorBoundaryClass extends React.Component<ErrorBoundaryProps, ErrorBounda
+     // 로컬스토리지 전체 초기화 후 새로고침 (치명적 에러 해결용)
+     handleReset(): void {
+         try {
+-            localStorage.clear();
++            const stanbeatKeys = Object.keys(localStorage).filter((key) => key.startsWith('stanbeat_'));
++            stanbeatKeys.forEach((key) => localStorage.removeItem(key));
+         } catch {
+             // localStorage 접근 불가 시 무시
+         }
+@@ -108,7 +109,7 @@ class ErrorBoundaryClass extends React.Component<ErrorBoundaryProps, ErrorBounda
+                             }}
+                         >
+                             {this.state.error.toString()}
+-                            {this.state.errorInfo?.componentStack}
++                            {import.meta.env.DEV ? this.state.errorInfo?.componentStack : null}
+                         </pre>
+                     )}
+ 
+diff --git a/components/Layout.tsx b/components/Layout.tsx
+index 99d0d81..3763c5f 100644
+--- a/components/Layout.tsx
++++ b/components/Layout.tsx
+@@ -84,7 +84,7 @@ export const Header = () => {
+ 
+   return (
+     <header className="sticky top-0 z-50 bg-[#1A0B2E]/90 backdrop-blur-md border-b border-[#FF0080]/30 px-4 py-3 flex justify-between items-center shadow-[0_4px_20px_rgba(255,0,128,0.2)]">
+-      <button onClick={() => { vibrate(); toggleMenu(); }} className="text-[#00FFFF] btn-squishy neon-glow-icon" aria-label="Open Menu">
++      <button onClick={() => { vibrate(); toggleMenu(); }} className="text-[#00FFFF] btn-squishy neon-glow-icon">
+         <Menu size={24} />
+       </button>
+       {/* 5초(현재 3초) 롱프레스 시 관리자 모드(ADMIN) 토글 활성화 */}
+@@ -113,8 +113,6 @@ export const Header = () => {
+ // ─── 사이드 메뉴 컴포넌트 (로그인/로그아웃, 홈, 리더보드, 히스토리 등) ───
+ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () => void; onOpenHearts: () => void }) => {
+   const { isMenuOpen, toggleMenu, currentUser, logout, login, setView, language, consumeHeart } = useStore();
+-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+-
+   if (!isMenuOpen) return null;
+ 
+   return (
+@@ -124,7 +122,7 @@ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: ()
+         <div className="p-6 border-b border-white/10 bg-gradient-to-br from-[#FF0080]/20 to-transparent">
+           <div className="flex items-center justify-between mb-4">
+             <h2 className="text-[#00FFFF] font-display text-xl neon-cyan">{t(language, 'profile')}</h2>
+-            <button onClick={toggleMenu} className="btn-squishy" aria-label="Close Menu"><X className="text-white/70" /></button>
++            <button onClick={toggleMenu} className="btn-squishy"><X className="text-white/70" /></button>
+           </div>
+           {currentUser ? (
+             <div className="flex items-center gap-3">
+@@ -136,21 +134,9 @@ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: ()
+             </div>
+           ) : (
+             <button
+-              disabled={isLoggingIn}
+-              onClick={async () => {
+-                if (isLoggingIn) return;
+-                setIsLoggingIn(true);
+-                vibrate();
+-                try {
+-                  await login();
+-                  toggleMenu();
+-                } finally {
+-                  setIsLoggingIn(false);
+-                }
+-              }}
+-              className="w-full bg-[#FF0080] text-white py-2 rounded font-bold btn-squishy disabled:opacity-50 flex items-center justify-center gap-2"
++              onClick={() => { vibrate(); login(); toggleMenu(); }}
++              className="w-full bg-[#FF0080] text-white py-2 rounded font-bold btn-squishy"
+             >
+-              {isLoggingIn ? <span className="animate-spin text-xl">↻</span> : null}
+               {t(language, 'loginWithGoogle')}
+             </button>
+           )}
+@@ -194,7 +180,7 @@ const MenuItem = ({ icon, label, color = 'text-white', onClick }: { icon: React.
+ 
+ export const Layout = ({ children, onOpenLanguage, onOpenHearts }: { children?: React.ReactNode; onOpenLanguage: () => void; onOpenHearts: () => void }) => (
+   <div className="min-h-screen bg-[#1A0B2E] flex justify-center items-start relative overflow-hidden">
+-    <div className="fixed inset-0 bg-gradient-to-br from-[#1A0B2E] via-[#0D0518] to-[#1A0B2E] animate-[bgShift_12s_ease-in-out_infinite_alternate] opacity-60" style={{ willChange: 'background-position' }} />
++    <div className="fixed inset-0 bg-gradient-to-br from-[#1A0B2E] via-[#0D0518] to-[#1A0B2E] animate-[bgShift_12s_ease-in-out_infinite_alternate] opacity-60" />
+     <div className="fixed inset-0 bg-black/70 z-0" />
+     <div className="w-full max-w-[430px] min-h-screen bg-[#0D0518]/85 relative z-10 shadow-2xl flex flex-col">
+       <Header />
+@@ -206,21 +192,12 @@ export const Layout = ({ children, onOpenLanguage, onOpenHearts }: { children?:
+ );
+ 
+ export const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: string; children?: React.ReactNode }) => {
+-  useEffect(() => {
+-    if (isOpen) {
+-      document.body.style.overflow = 'hidden';
+-    } else {
+-      document.body.style.overflow = '';
+-    }
+-    return () => { document.body.style.overflow = ''; };
+-  }, [isOpen]);
+-
+   if (!isOpen) return null;
+   return (
+     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+-      <div className="bg-[#1A0B2E] w-full max-w-sm rounded-2xl border border-[#FF0080]/40 shadow-[0_0_30px_rgba(255,0,128,0.4)] relative p-6 max-h-[90vh] overflow-y-auto">
+-        <button onClick={onClose} className="absolute top-4 right-4 text-white/50 hover:text-white btn-squishy" aria-label="Close Modal"><XCircle /></button>
++      <div className="bg-[#1A0B2E] w-full max-w-sm rounded-2xl border border-[#FF0080]/40 shadow-[0_0_30px_rgba(255,0,128,0.4)] relative p-6">
++        <button onClick={onClose} className="absolute top-4 right-4 text-white/50 hover:text-white btn-squishy"><XCircle /></button>
+         <h3 className="text-2xl font-display text-white mb-4 text-center">{title}</h3>
+         {children}
+       </div>
+diff --git a/firebase.ts b/firebase.ts
+index 0a612c2..2fe5dbd 100644
+--- a/firebase.ts
++++ b/firebase.ts
+@@ -3,7 +3,7 @@
+ // 환경변수(VITE_FIREBASE_*)가 없는 경우 mock 모드로 동작하여 오류 없이 실행됨
+ 
+ // Firebase App 초기화에 필요한 함수 임포트
+-import { initializeApp } from 'firebase/app';
++import { getApp, getApps, initializeApp } from 'firebase/app';
+ 
+ // Firebase Auth 관련 기능 임포트
+ // - getAuth: Auth 인스턴스 가져오기
+@@ -44,7 +44,6 @@ import {
+     getDocs,
+     serverTimestamp,
+     increment,
+-    onSnapshot,
+ } from 'firebase/firestore';
+ 
+ // ─── Firebase 설정 객체 ──────────────────────────────────────────────────────
+@@ -71,7 +70,7 @@ const isConfigured = !!(
+ 
+ // ─── Firebase 인스턴스 초기화 ─────────────────────────────────────────────
+ // 환경변수가 있을 때만 실제 Firebase 앱 초기화 (없으면 null)
+-const app = isConfigured ? initializeApp(firebaseConfig) : null;
++const app = isConfigured ? (getApps().length ? getApp() : initializeApp(firebaseConfig)) : null;
+ 
+ // Firebase Auth 인스턴스 (로그인/로그아웃에 사용)
+ const auth = isConfigured && app ? getAuth(app) : null;
+@@ -226,20 +225,6 @@ export async function getGlobalStats(): Promise<Record<string, unknown> | null>
+     }
+ }
+ 
+-// ─── Firestore: 글로벌 통계 실시간 조회 (Admin) ──────────────────────
+-export function listenGlobalStats(callback: (stats: { totalHeartsUsed: number, adRevenue: number }) => void): () => void {
+-    if (!db) return () => { };
+-    const unsub = onSnapshot(doc(db, 'stats', 'global'), (snap) => {
+-        if (snap.exists()) {
+-            const data = snap.data();
+-            callback({ totalHeartsUsed: Number(data.totalHeartsUsed || 0), adRevenue: Number(data.adRevenue || 0) });
+-        }
+-    }, (err) => {
+-        console.error('[Firebase] Failed to listen to global stats:', err);
+-    });
+-    return unsub;
+-}
+-
+ // ─── Firestore: 전체 사용자 목록 반환 (Admin) ─────────────────────────
+ // 관리자 대시보드용, 모든 users 컬렉션 문서를 반환 (페이지네이션 없이 전부 반환 - DAU 산정용)
+ export async function getAdminGlobalUsers(): Promise<Array<Record<string, unknown>>> {
+diff --git a/i18n/index.ts b/i18n/index.ts
+index 3b27bff..4eea8a6 100644
+--- a/i18n/index.ts
++++ b/i18n/index.ts
+@@ -71,8 +71,8 @@ const dictionaries: Record<LanguageCode, Messages> = {
+ };
+ 
+ export const t = (lang: LanguageCode, key: MessageKey, vars?: Record<string, string>) => {
+-  const table = dictionaries[lang] ?? dictionaries.en ?? dictionaries.ko;
+-  let value = table[key] ?? dictionaries.en[key] ?? baseMessages[key];
++  const table = dictionaries[lang] ?? dictionaries.ko;
++  let value = table[key] ?? baseMessages[key];
+   if (vars) {
+     Object.entries(vars).forEach(([k, v]) => {
+       value = value.replaceAll(`{${k}}`, v);
+diff --git a/store.ts b/store.ts
+index 0a5d2aa..f118bc1 100644
+--- a/store.ts
++++ b/store.ts
+@@ -34,8 +34,6 @@ interface AppState {
+   language: LanguageCode;
+   notice: string;
+   showNoticePopup: boolean;
+-  showBrowserBlocker: boolean;
+-  deferredPrompt: any | null;
+   termsAccepted: boolean;
+   seasonEndsAt: number;
+   heartsUsedToday: number;
+@@ -54,8 +52,6 @@ interface AppState {
+   setLanguage: (lang: LanguageCode) => void;
+   setNotice: (value: string) => void;
+   setShowNoticePopup: (value: boolean) => void;
+-  setShowBrowserBlocker: (value: boolean) => void;
+-  setDeferredPrompt: (value: any | null) => void;
+   acceptTerms: () => void;
+ 
+   setBotConfig: (config: BotConfig) => void;
+@@ -64,7 +60,7 @@ interface AppState {
+   logout: () => void;
+   consumeHeart: () => boolean;
+   addHeart: (amount: number) => void;
+-  claimDailyHeart: () => Promise<boolean>;
++  claimDailyHeart: () => boolean;
+ 
+   updateBestTime: (time: number) => void;
+   addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY', value: number) => void;
+@@ -96,6 +92,8 @@ const favorites = ['Jimin', 'V', 'Tiger', 'Jungkook', 'Hobi', 'ARMY', 'Kookie'];
+ const countries = ['KR', 'US', 'JP', 'BR', 'TH', 'ID', 'PH', 'FR', 'DE', 'VN'];
+ const AVATAR_SEED = 'stanbeat-avatar';
+ const THREE_HOURS = 3 * 60 * 60 * 1000;
++const MAX_HEARTS = 3;
++const MAX_HISTORY_ITEMS = 100;
+ 
+ const todayUtc = () => new Date().toISOString().slice(0, 10);
+ 
+@@ -126,13 +124,13 @@ const safeStorage = {
+ };
+ 
+ export const detectLanguageFromIP = async (): Promise<LanguageCode | null> => {
+-  if (safeStorage.get<boolean>('stanbeat_manual_lang', false)) {
+-    return null; // Do not override if the user manually selected a language
+-  }
++  const controller = new AbortController();
++  const timeoutId = setTimeout(() => controller.abort(), 3000);
+   try {
+-    const res = await fetch('https://ipapi.co/json/');
++    const res = await fetch('https://ipapi.co/json/', { signal: controller.signal });
++    if (!res.ok) return null;
+     const data = await res.json();
+-    const countryCode: string = data.country_code;
++    const countryCode = String(data.country_code ?? '').trim().toUpperCase();
+     const map: Record<string, LanguageCode> = {
+       KR: 'ko', JP: 'ja', CN: 'zh-CN', TH: 'th', ID: 'id',
+       VN: 'vi', PH: 'en', US: 'en', GB: 'en', AU: 'en',
+@@ -142,6 +140,8 @@ export const detectLanguageFromIP = async (): Promise<LanguageCode | null> => {
+     return map[countryCode] ?? null;
+   } catch {
+     return null;
++  } finally {
++    clearTimeout(timeoutId);
+   }
+ };
+ 
+@@ -153,9 +153,13 @@ const generateNickname = () => {
+ };
+ 
+ const generateReferralCode = () => {
+-  const rand = Math.random().toString(36).substring(2, 8);
+-  const time = Date.now().toString(36).slice(-4);
+-  return (rand + time).toUpperCase();
++  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
++    const bytes = new Uint8Array(6);
++    crypto.getRandomValues(bytes);
++    return Array.from(bytes, (b) => (b % 36).toString(36)).join('').slice(0, 8);
++  }
++  const randomPart = Math.random().toString(36).slice(2);
++  return randomPart.padEnd(8, 'x').slice(0, 8);
+ };
+ 
+ // 유저 객체의 하트 만료 시간을 체크하여, 만료되었다면 하트를 0으로 초기화해 반환하는 상태 정규화 함수
+@@ -233,15 +237,13 @@ const savedAdConfig = safeStorage.get<AdConfig>('stanbeat_ad_config', DEFAULT_AD
+ const savedBotConfig = safeStorage.get<BotConfig>('stanbeat_bot_config', { mean: 50000, stdDev: 15000 });
+ 
+ export const useStore = create<AppState>((set, get) => ({
+-  currentUser: savedUser ? normalizeHearts({ ...savedUser, gameHistory: Array.isArray(savedUser.gameHistory) ? savedUser.gameHistory.slice(-100) : [] }) : null,
++  currentUser: savedUser ? normalizeHearts(savedUser) : null,
+   currentView: 'HOME',
+   isMenuOpen: false,
+   leaderboard: savedLeaderboard,
+   language: savedLang,
+   notice: savedNotice,
+   showNoticePopup: savedShowNotice,
+-  showBrowserBlocker: false,
+-  deferredPrompt: null,
+   termsAccepted: savedUser?.agreedToTerms ?? false,
+   seasonEndsAt: safeStorage.get<number>('stanbeat_season_ends', Date.now() + getMsUntilNextUtcMidnight()),
+   heartsUsedToday: safeStorage.get<number>('stanbeat_hearts_used', 0),
+@@ -255,16 +257,10 @@ export const useStore = create<AppState>((set, get) => ({
+   adminStats: { totalHeartsUsed: 0, adRevenue: 0 },
+   botConfig: savedBotConfig,
+ 
+-  setView: (view) => {
+-    if (view !== get().currentView) {
+-      window.history.pushState({ view }, '', window.location.pathname);
+-      set({ currentView: view });
+-    }
+-  },
++  setView: (view) => set({ currentView: view }),
+   toggleMenu: () => set((state) => ({ isMenuOpen: !state.isMenuOpen })),
+   setLanguage: (language) => {
+     safeStorage.set('stanbeat_lang', language);
+-    safeStorage.set('stanbeat_manual_lang', true);
+     if (language === 'ar') {
+       document.documentElement.setAttribute('dir', 'rtl');
+     } else {
+@@ -280,8 +276,6 @@ export const useStore = create<AppState>((set, get) => ({
+     safeStorage.set('stanbeat_show_notice', value);
+     set({ showNoticePopup: value });
+   },
+-  setShowBrowserBlocker: (value) => set({ showBrowserBlocker: value }),
+-  setDeferredPrompt: (value) => set({ deferredPrompt: value }),
+   acceptTerms: () => {
+     const user = get().currentUser;
+     if (!user) return;
+@@ -304,13 +298,13 @@ export const useStore = create<AppState>((set, get) => ({
+     // 현재 접속한 브라우저의 URL에 있는 쿼리(query) 파라미터들을 파싱합니다.
+     const urlParams = new URLSearchParams(window.location.search);
+     // 쿼리 파라미터 중 추천인 코드('ref')가 있는지 확인하여 가져옵니다.
+-    const refCode = urlParams.get('ref');
++    const refCode = urlParams.get('ref')?.trim().slice(0, 64) || null;
+ 
+     // 파이어베이스(연동) 기능이 활성화되어 환경변수로 로드된 경우만 로그인 시도
+     if (isFirebaseEnabled) {
+       try {
+         // 인앱 브라우저(인스타그램, 페이스북, 카카오톡 등) 감지 및 경고
+-        const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
++        const userAgent = [navigator.userAgent, navigator.vendor].filter(Boolean).join(' ');
+         const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads/i.test(userAgent);
+         if (isEmbeddedBrowser) {
+           alert('인앱 브라우저에서는 구글 로그인이 차단될 수 있습니다. 오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어주세요.\n\nIn-app browsers may block Google Login. Please open in Chrome/Safari.');
+@@ -395,13 +389,15 @@ export const useStore = create<AppState>((set, get) => ({
+           return;
+         }
+ 
+-      } catch (error: any) {
++      } catch (error: unknown) {
+         // 로그인이 실패하거나 여러 이유로 진행할 수 없었을 때 발생
+         console.error('Google login failed:', error);
++        const message = error instanceof Error ? error.message : String(error);
++        const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
+ 
+         // 403 disallowed_useragent 에러 (보통 인앱 브라우저 등에서 구글이 차단할 때 발생)
+-        if (error?.message?.includes('disallowed_useragent') || error?.code === 'auth/unauthorized-domain' || error?.message?.includes('403') || error?.message?.includes('OAuth')) {
+-          set({ showBrowserBlocker: true });
++        if (message.includes('disallowed_useragent') || code === 'auth/unauthorized-domain' || message.includes('403')) {
++          alert('보안상의 이유로 현재 브라우저에서는 구글 로그인을 진행할 수 없습니다.\n오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어 다시 시도해주세요.\n\nGoogle Login is blocked in this browser. Please open in Chrome/Safari.');
+         } else {
+           alert('구글 로그인에 실패했습니다. 다시 시도해주세요.\nGoogle login failed. Please try again.');
+         }
+@@ -437,11 +433,15 @@ export const useStore = create<AppState>((set, get) => ({
+   },
+ 
+   logout: () => {
++    const unsub = get().rewardListenerUnsubscribe;
++    if (unsub) {
++      unsub();
++    }
+     if (isFirebaseEnabled) {
+       firebaseSignOut().catch(console.error);
+     }
+     safeStorage.set('stanbeat_user', null);
+-    set({ currentUser: null, currentView: 'HOME', termsAccepted: false });
++    set({ currentUser: null, currentView: 'HOME', termsAccepted: false, rewardListenerUnsubscribe: null, videoWatchCount: 0 });
+   },
+ 
+   consumeHeart: () => {
+@@ -475,11 +475,11 @@ export const useStore = create<AppState>((set, get) => ({
+     if (!user || user.banned) return;
+     const normalized = normalizeHearts(user);
+     const record: HistoryEvent | null = amount > 0 ? { type: 'AD', value: amount, date: new Date().toISOString() } : null;
+-    const nextHistory = record ? [...normalized.gameHistory, record] : normalized.gameHistory;
++    const nextHistory = (record ? [...normalized.gameHistory, record] : normalized.gameHistory).slice(-MAX_HISTORY_ITEMS);
+ 
+     const updatedUser = {
+       ...normalized,
+-      hearts: normalized.hearts + amount,
++      hearts: Math.max(0, Math.min(MAX_HEARTS, normalized.hearts + amount)),
+       expiresAt: Date.now() + THREE_HOURS,
+       gameHistory: nextHistory,
+     };
+@@ -497,41 +497,32 @@ export const useStore = create<AppState>((set, get) => ({
+   },
+ 
+   // ─── 일일 하트 지급 처리 ──────────────────────────────────────────
+-  claimDailyHeart: async () => {
++  claimDailyHeart: () => {
+     const user = get().currentUser;
+     if (!user || user.banned) return false;
+     const normalized = normalizeHearts(user);
+-
+-    let todayStr = todayUtc();
+-    try {
+-      // Validate via un-spoofable public time API instead of local device clock
+-      const res = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
+-      const data = await res.json();
+-      todayStr = data.datetime.slice(0, 10);
+-    } catch {
+-      // Silently fallback to device time if API is blocked/offline
+-    }
+-
+-    if (normalized.lastDailyHeart === todayStr) {
++    if (normalized.lastDailyHeart === todayUtc()) {
+       set({ currentUser: normalized });
+       return false;
+     }
+     const record: HistoryEvent = { type: 'DAILY', value: 1, date: new Date().toISOString() };
+     const updatedUser = {
+       ...normalized,
+-      hearts: Math.min(normalized.hearts + 1, 3),
+-      lastDailyHeart: todayStr,
++      hearts: Math.min(normalized.hearts + 1, MAX_HEARTS),
++      lastDailyHeart: todayUtc(),
+       expiresAt: Date.now() + THREE_HOURS,
+-      gameHistory: [...normalized.gameHistory, record],
++      gameHistory: [...normalized.gameHistory, record].slice(-MAX_HISTORY_ITEMS),
+     };
+     safeStorage.set('stanbeat_user', updatedUser);
++    if (isFirebaseEnabled) {
++      saveUserProfile(updatedUser.id, { hearts: updatedUser.hearts, lastDailyHeart: updatedUser.lastDailyHeart }).catch(console.error);
++    }
+     set({ currentUser: updatedUser });
+     return true;
+   },
+ 
+   // ─── 최고 기록 갱신 및 Firestore 저장 ──────────────────────────────
+   updateBestTime: (time) => {
+-    // Basic debounce guard to prevent high-frequency physics spam updates
+     if (time < 5000) {
+       console.warn(`[Anti-Cheat] Rejected impossible time: ${time}ms`);
+       return;
+@@ -566,7 +557,7 @@ export const useStore = create<AppState>((set, get) => ({
+     const user = get().currentUser;
+     if (!user) return;
+     const record: HistoryEvent = { type, value, date: new Date().toISOString() };
+-    const nextUser = { ...user, gameHistory: [...user.gameHistory, record].slice(-100) };
++    const nextUser = { ...user, gameHistory: [...user.gameHistory, record].slice(-MAX_HISTORY_ITEMS) };
+     safeStorage.set('stanbeat_user', nextUser);
+     set({ currentUser: nextUser });
+ 
+@@ -710,6 +701,7 @@ export const useStore = create<AppState>((set, get) => ({
+   },
+ 
+   banUser: (id) => {
++    if (!id) return;
+     if (isFirebaseEnabled) {
+       banUserInFs(id);
+     }
+@@ -720,28 +712,36 @@ export const useStore = create<AppState>((set, get) => ({
+       user.id === id ? { ...user, banned: true } : user
+     );
+ 
++    const currentUser = get().currentUser;
++    const nextCurrentUser = currentUser?.id === id ? { ...currentUser, banned: true } : currentUser;
++    if (nextCurrentUser) {
++      safeStorage.set('stanbeat_user', nextCurrentUser);
++    }
++
+     safeStorage.set('stanbeat_leaderboard', combined);
+-    set({ leaderboard: combined, adminUsers: updatedAdminUsers });
++    set({ leaderboard: combined, adminUsers: updatedAdminUsers, currentUser: nextCurrentUser ?? currentUser });
+   },
+ 
+   editUserHeart: (id, hearts) => {
++    if (!id || !Number.isFinite(hearts)) return;
++    const clampedHearts = Math.max(0, Math.min(MAX_HEARTS, Math.floor(hearts)));
+     if (isFirebaseEnabled) {
+-      editUserHeartInFirestore(id, hearts);
++      editUserHeartInFirestore(id, clampedHearts);
+     }
+ 
+     const user = get().currentUser;
+     if (user && user.id === id) {
+-      const updatedUser = { ...user, hearts: Math.max(0, Math.min(3, hearts)), expiresAt: Date.now() + THREE_HOURS };
++      const updatedUser = { ...user, hearts: clampedHearts, expiresAt: Date.now() + THREE_HOURS };
+       safeStorage.set('stanbeat_user', updatedUser);
+       set({ currentUser: updatedUser });
+     }
+ 
+     const combined = get().leaderboard.map((entry) =>
+-      entry.id === id ? { ...entry, hearts: Math.max(0, Math.min(3, hearts)) } : entry
++      entry.id === id ? { ...entry, hearts: clampedHearts } : entry
+     );
+ 
+     const updatedAdminUsers = get().adminUsers.map(user =>
+-      user.id === id ? { ...user, hearts: Math.max(0, Math.min(3, hearts)) } : user
++      user.id === id ? { ...user, hearts: clampedHearts } : user
+     );
+ 
+     safeStorage.set('stanbeat_leaderboard', combined);
+@@ -750,8 +750,8 @@ export const useStore = create<AppState>((set, get) => ({
+ 
+   getReferralLink: () => {
+     const user = get().currentUser;
+-    if (!user) return window.location.origin;
+-    return `${window.location.origin}?ref=${user.referralCode}`;
++    if (!user) return window.location.href;
++    return `${window.location.origin}${window.location.pathname}?ref=${encodeURIComponent(user.referralCode)}`;
+   },
+ 
+   toggleAdminRole: () => {
+@@ -790,7 +790,16 @@ export const useStore = create<AppState>((set, get) => ({
+   // ─── Ad System ──────────────────────────────────────────────────
+   setAdConfig: (partial) => {
+     const current = get().adConfig;
+-    const next = { ...current, ...partial };
++    const merged = { ...current, ...partial };
++    const next: AdConfig = {
++      rewardedVideo: Boolean(merged.rewardedVideo),
++      offerwall: Boolean(merged.offerwall),
++      interstitial: Boolean(merged.interstitial),
++      rewardedVideoSeconds: Math.max(5, Math.min(120, Math.floor(merged.rewardedVideoSeconds))),
++      offerwallRewardHearts: Math.max(1, Math.min(MAX_HEARTS, Math.floor(merged.offerwallRewardHearts))),
++      rewardedVideoRewardHearts: Math.max(1, Math.min(MAX_HEARTS, Math.floor(merged.rewardedVideoRewardHearts))),
++      videosPerHeart: Math.max(1, Math.min(20, Math.floor(merged.videosPerHeart))),
++    };
+     safeStorage.set('stanbeat_ad_config', next);
+     set({ adConfig: next });
+   },
+@@ -806,22 +815,22 @@ export const useStore = create<AppState>((set, get) => ({
+ 
+   initAdscendListener: () => {
+     const user = get().currentUser;
+-    const existingUnsub = get().rewardListenerUnsubscribe;
+     if (!user) return;
++
++    const existingUnsub = get().rewardListenerUnsubscribe;
+     if (existingUnsub) {
+       existingUnsub();
++      set({ rewardListenerUnsubscribe: null });
+     }
+ 
+     console.log('[Adscend] Initializing reward listener for', user.id);
+-    // listenForRewards 콜백: 새로운 광고 보상 수신 시 하트 지급 및 Firestore 청구 처리
+     const unsub = listenForRewards(user.id, (reward) => {
+       console.log('[Adscend] 새 보상 수신:', reward);
+-      // 유저에게 하트 1개 지급
+       get().addHeart(1);
+-      // Firestore에 보상 청구 완료 기록 (이중 지급 방지)
+-      // reward를 명시적으로 타입 캐스팅하여 id 속성에 안전하게 접근
+-      const { id: rewardId } = reward as { id: string };
+-      claimRewardInFirestore(rewardId).catch(console.error);
++      const rewardId = typeof reward === 'object' && reward && 'id' in reward ? String((reward as { id?: unknown }).id ?? '') : '';
++      if (rewardId) {
++        claimRewardInFirestore(rewardId).catch(console.error);
++      }
+     });
+     set({ rewardListenerUnsubscribe: unsub });
+   },
+@@ -834,19 +843,24 @@ export const useStore = create<AppState>((set, get) => ({
+       const user = get().currentUser;
+       if (!user || user.banned) { resolve(false); return; }
+ 
++      const heartsReward = Math.max(1, Math.min(MAX_HEARTS, Math.floor(config.rewardedVideoRewardHearts)));
++      const videosPerHeart = Math.max(1, Math.floor(config.videosPerHeart));
+       const nextCount = get().videoWatchCount + 1;
+ 
+-      if (nextCount >= config.videosPerHeart) {
++      if (nextCount >= videosPerHeart) {
+         // Reset count and grant heart
+         const normalized = normalizeHearts(user);
+-        const record: HistoryEvent = { type: 'AD', value: config.rewardedVideoRewardHearts, date: new Date().toISOString() };
++        const record: HistoryEvent = { type: 'AD', value: heartsReward, date: new Date().toISOString() };
+         const updatedUser = {
+           ...normalized,
+-          hearts: Math.min(normalized.hearts + config.rewardedVideoRewardHearts, 3),
++          hearts: Math.min(normalized.hearts + heartsReward, MAX_HEARTS),
+           expiresAt: Date.now() + THREE_HOURS,
+-          gameHistory: [...normalized.gameHistory, record],
++          gameHistory: [...normalized.gameHistory, record].slice(-MAX_HISTORY_ITEMS),
+         };
+         const newRevenue = get().adRevenue + 0.35;
++        if (isFirebaseEnabled) {
++          incrementGlobalStats(0, 0.35);
++        }
+         safeStorage.set('stanbeat_user', updatedUser);
+         safeStorage.set('stanbeat_ad_revenue', newRevenue);
+         set({ adRevenue: newRevenue, currentUser: updatedUser, videoWatchCount: 0 });
+@@ -861,10 +875,10 @@ export const useStore = create<AppState>((set, get) => ({
+ 
+   completeOfferwall: async () => {
+     const config = get().adConfig;
+-    if (!config.offerwall) return false;
++    const user = get().currentUser;
++    if (!config.offerwall || !user || user.banned) return false;
+ 
+-    // Real offerwall rewards are handled by initAdscendListener + Firestore S2S Postback
+-    // This function can be used to trigger an immediate check or analytics
++    get().addHeart(Math.max(1, Math.min(MAX_HEARTS, Math.floor(config.offerwallRewardHearts))));
+     return true;
+   },
+ }));
+diff --git a/utils.ts b/utils.ts
+index 31e8d98..56d6541 100644
+--- a/utils.ts
++++ b/utils.ts
+@@ -5,50 +5,6 @@
+ // 그리드 셀/단어 설정 타입 임포트 (types.ts에서 정의됨)
+ import { GridCell, WordConfig } from './types';
+ 
+-// ─── 오디오 합성기 (SFX) ───────────────────────────────────────────────────────
+-let audioCtx: AudioContext | null = null;
+-export const playSfx = (type: 'tap' | 'found' | 'win') => {
+-  try {
+-    if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+-    if (audioCtx.state === 'suspended') audioCtx.resume();
+-    const osc = audioCtx.createOscillator();
+-    const gain = audioCtx.createGain();
+-    osc.connect(gain);
+-    gain.connect(audioCtx.destination);
+-    const now = audioCtx.currentTime;
+-
+-    if (type === 'tap') {
+-      osc.type = 'sine';
+-      osc.frequency.setValueAtTime(600, now);
+-      osc.frequency.exponentialRampToValueAtTime(300, now + 0.1);
+-      gain.gain.setValueAtTime(0.1, now);
+-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+-      osc.start(now);
+-      osc.stop(now + 0.1);
+-    } else if (type === 'found') {
+-      osc.type = 'triangle';
+-      osc.frequency.setValueAtTime(440, now);
+-      osc.frequency.setValueAtTime(880, now + 0.1);
+-      gain.gain.setValueAtTime(0.1, now);
+-      gain.gain.linearRampToValueAtTime(0, now + 0.2);
+-      osc.start(now);
+-      osc.stop(now + 0.2);
+-    } else if (type === 'win') {
+-      osc.type = 'square';
+-      osc.frequency.setValueAtTime(400, now);
+-      osc.frequency.setValueAtTime(600, now + 0.1);
+-      osc.frequency.setValueAtTime(800, now + 0.2);
+-      osc.frequency.setValueAtTime(1200, now + 0.3);
+-      gain.gain.setValueAtTime(0.1, now);
+-      gain.gain.linearRampToValueAtTime(0, now + 0.5);
+-      osc.start(now);
+-      osc.stop(now + 0.5);
+-    }
+-  } catch (e) {
+-    // Ignore audio errors on unsupported browsers or strict autoplay rules
+-  }
+-};
+-
+ // ─── 시간 포맷터 ─────────────────────────────────────────────────────────────
+ // 밀리초 정수를 "MM:SS.CC" 형식의 문자열로 변환
+ // 예: 75432ms → "01:15.43"
+@@ -142,48 +98,48 @@ const placeWord = (
+ 
+ // ─── 단어 찾기 그리드 생성기 ─────────────────────────────────────────────────
+ // 주어진 크기와 단어 목록으로 단어 찾기 보드를 생성하는 핵심 함수
+-// 빈 칸이 너무 한쪽으로 쏠리지 않도록 최소 3번까지 재시도하는 엔트로피 패스 적용
++// 대각선 방향도 지원하며, 빈 칸은 랜덤 알파벳으로 채움
+ export const generateGrid = (size: number, words: string[]) => {
+-  let bestGrid: any = null;
+-  let minEmptyRows = size;
+-
+-  for (let attempt = 0; attempt < 3; attempt++) {
+-    const board: string[][] = Array(size).fill(null).map(() => Array(size).fill(''));
+-    const placedWords: WordConfig[] = words.map(w => ({ word: w, found: false }));
+-    const placement: PlacedWord[] = [];
+-
+-    words.forEach(word => {
+-      let placed = false;
+-      let attempts = 0;
+-      while (!placed && attempts < 200) {
+-        const dir = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
+-        const row = Math.floor(Math.random() * size);
+-        const col = Math.floor(Math.random() * size);
+-        if (canPlaceWord(board, word, row, col, dir, size)) {
+-          placement.push(placeWord(board, word, row, col, dir));
+-          placed = true;
+-        }
+-        attempts++;
+-      }
+-    });
++  // size × size 크기의 빈 2차원 배열 초기화 (각 셀은 빈 문자열)
++  const board: string[][] = Array(size).fill(null).map(() => Array(size).fill(''));
+ 
+-    const emptyRows = board.filter(r => r.every(c => c === '')).length;
+-    const currentGrid = { board, placedWords, placement, emptyRows };
++  // 모든 단어를 '아직 못 찾음(found: false)' 상태로 초기화
++  const placedWords: WordConfig[] = words.map(w => ({ word: w, found: false }));
+ 
+-    if (!bestGrid || emptyRows < minEmptyRows) {
+-      bestGrid = currentGrid;
+-      minEmptyRows = emptyRows;
+-    }
++  // 각 단어의 배치 정보를 저장할 배열 (정답 검증 및 자동 풀기에 사용)
++  const placement: PlacedWord[] = [];
+ 
+-    if (emptyRows <= 1) break; // Perfect spread, stop rolling
+-  }
++  // ─── 각 단어 배치 시도 ─────────────────────────────────────────────
++  words.forEach(word => {
++    let placed = false;  // 이번 단어가 성공적으로 배치되었는지 여부
++    let attempts = 0;    // 시도 횟수 (무한 루프 방지)
+ 
+-  const { board, placedWords, placement } = bestGrid;
++    while (!placed && attempts < 200) { // 최대 200번 시도
++      // 랜덤 방향 선택 (수평/수직/대각선 중 하나)
++      const dir = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
++
++      // 랜덤 시작 위치 선택
++      const row = Math.floor(Math.random() * size);
++      const col = Math.floor(Math.random() * size);
++
++      // 배치 가능하면 실제로 배치하고 루프 종료
++      if (canPlaceWord(board, word, row, col, dir, size)) {
++        placement.push(placeWord(board, word, row, col, dir));
++        placed = true;
++      }
++      attempts++;
++    }
++    // 200번 시도 후에도 배치 실패 시 해당 단어는 그냥 누락됨
++    // (실제로는 10×10 보드에서 7글자 이하 단어는 거의 항상 성공)
++  });
+ 
+   // ─── 셀 → 단어 매핑 구축 ──────────────────────────────────────────
++  // "이 셀은 어떤 단어에 속하는가"를 O(1)로 조회하기 위한 Map
++  // key: "행-열" 문자열, value: 해당 셀이 속한 단어
+   const cellWordMap: Map<string, string> = new Map();
+-  placement.forEach(({ word, row, col, dir }: PlacedWord) => {
++  placement.forEach(({ word, row, col, dir }) => {
+     for (let i = 0; i < word.length; i++) {
++      // 각 글자의 셀 ID를 키로, 단어를 값으로 저장
+       cellWordMap.set(`${row + dir.r * i}-${col + dir.c * i}`, word);
+     }
+   });

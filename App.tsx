@@ -3,7 +3,7 @@ import { ArrowLeft, Clipboard, ClipboardCheck, DollarSign, Play, RefreshCw, Sett
 import { Layout, Modal } from './components/Layout';
 import { languageOptions, t } from './i18n';
 import { useStore, detectLanguageFromIP, type AdConfig } from './store';
-import { GridCell, WordConfig } from './types';
+import { GridCell, WordConfig, HistoryEvent } from './types';
 import confetti from 'canvas-confetti';
 import { formatTime, generateGrid, getCountryFlag, getSolutionCells, playSfx } from './utils';
 import { getCurrentSeasonNumber, generateGuestShowcase } from './league';
@@ -20,6 +20,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const { setView, consumeHeart, currentUser, login, language, termsAccepted, acceptTerms, seasonEndsAt, notice, showNoticePopup, setShowNoticePopup } = useStore();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  const [termsChecked, setTermsChecked] = useState(true);
   const [showNoticeModal, setShowNoticeModal] = useState(false);
   const [rewardIndex, setRewardIndex] = useState(0);
   const [transitioning, setTransitioning] = useState(false);
@@ -32,6 +33,12 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
       setShowNoticeModal(true);
     }
   }, [showNoticePopup, notice]);
+
+  useEffect(() => {
+    if (showTermsModal) {
+      setTermsChecked(true);
+    }
+  }, [showTermsModal]);
 
   useEffect(() => {
     const interval = setInterval(() => setRewardIndex((prev) => (prev + 1) % 3), 1800);
@@ -217,12 +224,13 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
           <pre className="text-white/60 text-[11px] whitespace-pre-wrap font-sans leading-relaxed">{t(language, 'termsFullText')}</pre>
         </div>
         <label className="flex items-start text-white/80 text-sm gap-2 mb-4 text-left">
-          <input type="checkbox" defaultChecked />
+          <input type="checkbox" checked={termsChecked} onChange={(e) => setTermsChecked(e.target.checked)} />
           {t(language, 'termsAgree')}
         </label>
         <button
           onClick={() => { vibrate(); acceptTerms(); setShowTermsModal(false); }}
-          className="w-full bg-[#00FFFF] text-black font-bold py-2 rounded-lg btn-squishy"
+          disabled={!termsChecked}
+          className="w-full bg-[#00FFFF] text-black font-bold py-2 rounded-lg btn-squishy disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {t(language, 'termsAccept')}
         </button>
@@ -245,7 +253,7 @@ const TimerDisplay = ({ startMs, won, setElapsedState }: { startMs: number; won:
     const update = () => {
       const current = Date.now() - startMs;
       setVal(current);
-      setElapsedState(current); // Pass back to parent ONLY when won
+      setElapsedState(current);
     };
     const timer = setInterval(update, 10);
     return () => clearInterval(timer);
@@ -269,7 +277,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const [startId, setStartId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [won, setWon] = useState(false);
-  const startMs = useState(Date.now())[0];
+  const startMsRef = useRef(Date.now());
   const placementRef = useRef<{ word: string; row: number; col: number; dir: { r: number; c: number } }[]>([]);
   const [showDevPanel, setShowDevPanel] = useState(false);
   const [heartDelta, setHeartDelta] = useState(1);
@@ -465,16 +473,17 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
   const [cardGenerated, setCardGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const myEntry = leaderboard.find((e) => e.isCurrentUser);
-  // Real rank calculation
-  const rank = myEntry?.rank ?? (leaderboard.filter(e => e.time < elapsed).length + 1);
-  const percentile = leaderboard.length > 0 ? Math.ceil((rank / leaderboard.length) * 100) : 1;
-  const titleText = percentile <= 10 ? 'TOP 1% ARMY' : `Rank #${rank}`;
+  const visibleLeaderboard = leaderboard.filter((entry) => !entry.banned);
+  const myEntry = visibleLeaderboard.find((e) => e.isCurrentUser);
+  const rank = myEntry?.rank ?? (visibleLeaderboard.filter((e) => e.time < elapsed).length + 1);
+  const percentile = visibleLeaderboard.length > 0 ? Math.ceil((rank / visibleLeaderboard.length) * 100) : 1;
+  const titleText = percentile <= 1 ? 'TOP 1% ARMY' : percentile <= 10 ? 'TOP 10% ARMY' : `Rank #${rank}`;
 
   useEffect(() => {
     // Check if this was a new best time
-    const playHistory = currentUser?.gameHistory?.filter(h => h.type === 'PLAY') || [];
-    const isNewBest = playHistory.length === 1 || Math.min(...playHistory.map(h => h.value)) === elapsed;
+    const playHistory = currentUser?.gameHistory?.filter((h) => h.type === 'PLAY') || [];
+    const historicalBest = playHistory.length > 1 ? Math.min(...playHistory.slice(0, -1).map((h) => h.value)) : Infinity;
+    const isNewBest = playHistory.length === 1 || elapsed < historicalBest;
 
     if (isNewBest) {
       confetti({
@@ -612,17 +621,27 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
         }
       }
       // Fallback: copy link
-      await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        alert('Failed to share: ' + e.message);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        window.prompt('Copy this result link:', `${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
+      }
+    } catch (e: unknown) {
+      const errorName = e instanceof Error ? e.name : '';
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      if (errorName !== 'AbortError') {
+        alert('Failed to share: ' + errorMessage);
         try {
-          await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        } catch (err) { }
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          } else {
+            window.prompt('Copy this result link:', `${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
+          }
+        } catch { }
       }
     }
   };
@@ -630,9 +649,13 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
   const handleCopyLink = async () => {
     vibrate();
     try {
-      await navigator.clipboard.writeText(getReferralLink());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(getReferralLink());
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        window.prompt('Copy this invite link:', getReferralLink());
+      }
     } catch {
       // no-op
     }
@@ -1052,7 +1075,30 @@ const AdminScreen = () => {
         </div>
 
         {(() => {
-          const sortedUsers = [...(adminUsers.length > 0 ? adminUsers : leaderboard)].filter(u => {
+          type AdminListEntry = {
+            id: string;
+            banned?: boolean;
+            time?: number;
+            hearts?: number;
+            updatedAt?: { toMillis?: () => number } | string | number | Date;
+            gameHistory?: HistoryEvent[];
+            avatarUrl?: string;
+            nickname?: string;
+            country?: string;
+            role?: 'USER' | 'ADMIN';
+            email?: string;
+            referralCode?: string;
+            referredBy?: string;
+          };
+          const getUpdatedAtMs = (value: AdminListEntry['updatedAt']) => {
+            if (!value) return 0;
+            if (typeof value === 'object' && value !== null && 'toMillis' in value && typeof value.toMillis === 'function') {
+              return value.toMillis();
+            }
+            return new Date(value as string | number | Date).getTime();
+          };
+
+          const sortedUsers = [...(adminUsers.length > 0 ? adminUsers : leaderboard) as AdminListEntry[]].filter(u => {
             if (u.banned) return false;
             // Fuzzy search
             if (adminSearchQuery) {
@@ -1062,11 +1108,11 @@ const AdminScreen = () => {
               if (!nn.includes(q) && !id.includes(q)) return false;
             }
             return true;
-          }).sort((a: any, b: any) => {
-            if (adminSortBy === 'TIME') return (a.time || Infinity) - (b.time || Infinity);
-            if (adminSortBy === 'HEARTS') return (b.hearts || 0) - (a.hearts || 0);
-            const timeA = a.updatedAt ? (typeof a.updatedAt.toMillis === 'function' ? a.updatedAt.toMillis() : new Date(a.updatedAt).getTime()) : 0;
-            const timeB = b.updatedAt ? (typeof b.updatedAt.toMillis === 'function' ? b.updatedAt.toMillis() : new Date(b.updatedAt).getTime()) : 0;
+          }).sort((a, b) => {
+            if (adminSortBy === 'TIME') return (a.time ?? Infinity) - (b.time ?? Infinity);
+            if (adminSortBy === 'HEARTS') return (b.hearts ?? 0) - (a.hearts ?? 0);
+            const timeA = getUpdatedAtMs(a.updatedAt);
+            const timeB = getUpdatedAtMs(b.updatedAt);
             return timeB - timeA;
           });
 
@@ -1078,12 +1124,13 @@ const AdminScreen = () => {
             );
           }
 
-          return sortedUsers.slice(0, 20).map((u) => {
-            const entry = u as any;
+          return sortedUsers.slice(0, 20).map((entry) => {
             const isSelected = selectedUserId === entry.id;
-            const lastLogin = entry.updatedAt ? new Date(typeof entry.updatedAt.toMillis === 'function' ? entry.updatedAt.toMillis() : entry.updatedAt).toLocaleString() : 'Unknown';
-            const playHistoryCount = entry.gameHistory?.filter((h: any) => h.type === 'PLAY').length || 0;
-            const adRevenueApprox = (entry.gameHistory?.filter((h: any) => h.type === 'AD').reduce((acc: number, val: any) => acc + (val.value > 0 ? 0.35 : 0), 0) || 0).toFixed(2);
+            const lastLoginMs = getUpdatedAtMs(entry.updatedAt);
+            const lastLogin = lastLoginMs > 0 ? new Date(lastLoginMs).toLocaleString() : 'Unknown';
+            const history = Array.isArray(entry.gameHistory) ? entry.gameHistory : [];
+            const playHistoryCount = history.filter((h) => h.type === 'PLAY').length;
+            const adRevenueApprox = history.filter((h) => h.type === 'AD').reduce((acc, val) => acc + (val.value > 0 ? 0.35 : 0), 0).toFixed(2);
 
             return (
               <div key={entry.id} className={`flex flex-col bg-black/20 p-2 rounded transition-all ${isSelected ? 'ring-1 ring-[#00FFFF]' : ''}`}>
@@ -1324,12 +1371,12 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
     try {
       if (navigator.share) {
         await navigator.share({ title: 'StanBeat', text: 'Can you beat my record? Play StanBeat!', url: link });
-      } else if (navigator.clipboard) {
+      } else if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(link);
         setLinkCopied(true);
         setTimeout(() => setLinkCopied(false), 2000);
       } else {
-        alert('Link copied: ' + link);
+        window.prompt('Copy this invite link:', link);
       }
     } catch { }
   };
@@ -1445,12 +1492,23 @@ export default function App() {
 
   // IP 기반 언어 자동 감지
   useEffect(() => {
-    const saved = localStorage.getItem('stanbeat_lang');
+    let cancelled = false;
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem('stanbeat_lang');
+    } catch {
+      saved = null;
+    }
+
     if (!saved) {
       detectLanguageFromIP().then((lang) => {
-        if (lang) setLanguage(lang);
+        if (!cancelled && lang) setLanguage(lang);
       });
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [setLanguage]);
 
   // Initialize ad rewards listener when logged in

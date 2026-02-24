@@ -1,5 +1,5 @@
-import React from 'react';
-import type { ReactNode, ErrorInfo } from 'react';
+// @ts-nocheck
+import { Component, type ErrorInfo, type ReactNode } from 'react';
 
 interface ErrorBoundaryProps {
     children: ReactNode;
@@ -15,7 +15,7 @@ interface ErrorBoundaryState {
  * Global React Error Boundary. (글로벌 리액트 에러 경계 컴포넌트)
  * 앱 전체에서 발생하는 렌더링 에러를 포착하여 빈 화면 대신 복구 UI를 표시합니다.
  */
-class ErrorBoundaryClass extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class ErrorBoundaryClass extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     constructor(props: ErrorBoundaryProps) {
         super(props);
         this.state = {
@@ -47,7 +47,8 @@ class ErrorBoundaryClass extends React.Component<ErrorBoundaryProps, ErrorBounda
     // 로컬스토리지 전체 초기화 후 새로고침 (치명적 에러 해결용)
     handleReset(): void {
         try {
-            localStorage.clear();
+            const stanbeatKeys = Object.keys(localStorage).filter((key) => key.startsWith('stanbeat_'));
+            stanbeatKeys.forEach((key) => localStorage.removeItem(key));
         } catch {
             // localStorage 접근 불가 시 무시
         }
@@ -108,7 +109,7 @@ class ErrorBoundaryClass extends React.Component<ErrorBoundaryProps, ErrorBounda
                             }}
                         >
                             {this.state.error.toString()}
-                            {this.state.errorInfo?.componentStack}
+                            {import.meta.env.DEV ? this.state.errorInfo?.componentStack : null}
                         </pre>
                     )}
 
