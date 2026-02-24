@@ -7,9 +7,16 @@ import { LanguageCode } from './i18n';
 
 // ─── 게임 기록 (단건) ────────────────────────────────────────────────────────
 // 사용자가 게임 한 판을 완료할 때마다 생성되는 기록 객체
-export interface GameRecord {
-  time: number;   // 완료 시간 (밀리초 단위, 낮을수록 우수)
-  date: string;   // 완료 날짜 (ISO 8601 형식: "2026-02-20")
+export interface HistoryEvent {
+  type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY';
+  value: number;  // PLAY일 경우 시간(밀리초), 그 외는 획득/소모 하트 개수
+  date: string;   // 완료 날짜 (ISO 8601 형식)
+}
+
+// ─── 봇 대역 설정 (Admin) ────────────────────────────────────────────────────────
+export interface BotConfig {
+  mean: number;     // 봇 기록의 정규분포 평균 (밀리초)
+  stdDev: number;   // 봇 기록의 정규분포 표준편차 (밀리초)
 }
 
 // ─── 사용자 ─────────────────────────────────────────────────────────────────
@@ -27,7 +34,7 @@ export interface User {
   lastDailyHeart: string | null;// 마지막으로 일일 무료 하트를 받은 날짜 (YYYY-MM-DD)
   agreedToTerms: boolean;       // 이용약관 동의 여부 (false면 약관 모달 표시)
   banned: boolean;              // 관리자에 의해 차단된 사용자 여부
-  gameHistory: GameRecord[];    // 모든 게임 기록 배열 (히스토리 화면에서 표시)
+  gameHistory: HistoryEvent[];    // 모든 활동 기록 배열 (히스토리 화면에서 표시)
   referralCode: string;         // 추천인 코드 (URL 공유 시 사용)
   referredBy: string | null;    // 이 사용자를 추천한 사람의 추천인 코드
 }

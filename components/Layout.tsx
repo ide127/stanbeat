@@ -100,7 +100,7 @@ export const Header = () => {
         <span className={`neon-text ${adminFlash ? 'text-yellow-400' : 'text-[#FF0080]'}`}>STAN</span>BEAT
       </div>
       <div className="flex items-center gap-1 bg-black/40 px-3 py-1 rounded-full border border-[#FF0080]/50 relative">
-        <Heart size={16} className={`text-[#FF0080] fill-[#FF0080] ${pulse ? 'animate-pulse' : ''}`} />
+        <Heart size={16} className={`text-[#FF0080] fill-[#FF0080] transition-all duration-300 ${pulse ? 'scale-150 drop-shadow-[0_0_15px_rgba(255,0,128,1)]' : 'scale-100'}`} />
         <span className="text-white font-bold text-sm">{currentUser?.hearts ?? 0}</span>
         {delta !== null && (
           <span className="absolute -top-3 -right-1 text-[10px] text-[#00FFFF] font-bold bounce-up">{delta > 0 ? `+${delta}` : delta}</span>

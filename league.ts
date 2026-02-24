@@ -107,9 +107,19 @@ function generateSyntheticNickname(seed: number): string {
     return `${adj}${member}_${num}`;
 }
 
-/** DiceBear API를 이용하여 seed 기반 아바타 URL 생성 (동일 seed → 항상 동일 이미지) */
+/** seed 기반으로 90%는 이니셜 아바타, 10%는 랜덤 사진 아바타 생성 */
 function syntheticAvatar(seed: number): string {
-    return `https://api.dicebear.com/9.x/adventurer-neutral/svg?seed=stanbeat${seed}`;
+    const isPhoto = seed % 10 === 0; // 10% 확률로 사진
+    if (isPhoto) {
+        return `https://picsum.photos/seed/stanbeat${seed}/100/100`;
+    } else {
+        const name = generateSyntheticNickname(seed);
+        const initial = name.charAt(0).toUpperCase();
+        // 다양한 배경색 중 seed에 따라 하나 선택
+        const bgColors = ['FF0080', '1E90FF', 'FFD700', '8A2BE2', 'FF4500', '32CD32', '00CED1', 'FF1493'];
+        const bgColor = bgColors[seed % bgColors.length];
+        return `https://ui-avatars.com/api/?name=${initial}&background=${bgColor}&color=fff&rounded=true&bold=true`;
+    }
 }
 
 // ─── 핵심 리그 생성 함수 ──────────────────────────────────────────
@@ -132,90 +142,80 @@ export function generateLeague(
     userAvatarUrl: string,
     previousRank: number | null,
     hasNewBest: boolean,
+    overtakeUser: boolean = false,
+    botConfig: { mean: number; stdDev: number } = { mean: 50000, stdDev: 15000 }
 ): LeagueData {
-    // 유저의 ID를 기반으로 이 리그방의 총 인원수(60~99명)를 계산해옵니다.
     const leagueSize = getLeagueSize(userId);
-
-    // ─── 1단계: 유저의 목표 순위 결정 ──────────────────────────────
-    // 정규 분포를 이용해 순위를 랜덤하게 결정하되, 이전 순위를 기반으로 연속성 유지
-    let targetRank: number;
-    if (previousRank === null) {
-        // 처음 플레이: 평균 15위, 표준편차 5위의 정규분포로 2~30위 사이에서 무작위 결정
-        targetRank = Math.round(gaussianRandom(15, 5));
-    } else if (hasNewBest) {
-        // 신기록 달성: 이전 순위보다 평균 2계단 상승하는 정규분포를 적용해 동기부여 제공
-        targetRank = Math.round(gaussianRandom(previousRank - 2, 2));
-    } else {
-        // 일반 갱신: 이전 순위 근처에서 약간 오르내리도록(표준편차 2.5) 설정하여 자연스러운 변동 구현
-        targetRank = Math.round(gaussianRandom(previousRank, 2.5));
-    }
-    // 최종 산출된 목표 순위가 허용 가능한 범위(최소 2위 ~ 최대 제한)를 넘지 않도록 클램핑
-    targetRank = clamp(targetRank, MIN_USER_RANK, Math.min(MAX_USER_RANK, leagueSize - 5));
-
-    // ─── 2단계: 1위 합성 항목 생성 ─────────────────────────────────────
-    // 1위 플레이어의 기록은 유저의 최고 기록보다 평균 1.5초 더 빠르게 생성하여 경쟁심 자극
-    const gapToFirst = Math.abs(gaussianRandom(1500, 500));
-    // 생성된 1위 기록이 너무 비현실적이지 않도록 최소 한계치(5초)를 보장
-    const rank1Time = Math.max(5000, userTime - gapToFirst);
-
-
-    // ─── 3단계: 모든 항목 배열 구성 ───────────────────────────────────
+    const baseSeed = Math.abs(hashCode(userId + 'league_v4')); // 새로운 로직 구분을 위한 새 시드
     const entries: LeaderboardEntry[] = [];
-    const baseSeed = Math.abs(hashCode(userId + 'league')); // 리그 내 일관된 닉네임/아바타를 위한 시드
 
-    // 1위 합성 항목 추가 (항상 가장 빠른 기록)
-    entries.push(createSyntheticEntry(1, rank1Time, baseSeed + 1));
+    // 모델링 설정값 (기본값 평균 50초, 표준편차 15초 혹은 어드민 설정값)
+    const MEAN_TIME = botConfig.mean;
+    const STD_DEV = botConfig.stdDev;
 
-    // 2위부터 (목표순위-1)까지: 유저 위에 있는 플레이어들 (선형 보간으로 자연스러운 분포)
-    for (let rank = 2; rank < targetRank; rank++) {
-        const fraction = (rank - 1) / (targetRank - 1); // 1위~유저 사이를 균등하게 나누는 비율
-        const interpolatedTime = rank1Time + (userTime - rank1Time) * fraction; // 선형 보간
-        const noise = gaussianRandom(0, 300); // ±300ms의 자연스러운 노이즈 추가
-        const time = Math.max(rank1Time, Math.round(interpolatedTime + noise)); // 1위보다 빠를 수 없음
-        entries.push(createSyntheticEntry(rank, time, baseSeed + rank));
+    // 1단계: 합성 플레이어 봇 생성
+    for (let i = 0; i < leagueSize - 1; i++) {
+        const seed = baseSeed + i * 13;
+        // 정규분포를 사용해 그럴듯한 기록 생성, 최소 시간은 5000ms(5초)로 제한
+        let rawTime = Math.round(gaussianRandom(MEAN_TIME, STD_DEV));
+        rawTime = Math.max(5000, rawTime);
+        entries.push(createSyntheticEntry(0, rawTime, seed));
     }
 
-    // 목표 순위에 실제 유저 항목 삽입
+    // 2단계: 유저 1위 탈환 로직 (유저가 1위를 너무 오래 유지하면 봇이 추월)
+    if (overtakeUser) {
+        // 기존 봇들 중에서도 유저보다 빠른 봇이 없다면, 가장 빠른 봇 하나를 강제로 유저보다 빠르게 만듦
+        let hasFasterBot = false;
+        for (const entry of entries) {
+            if (entry.time < userTime) {
+                hasFasterBot = true;
+                break;
+            }
+        }
+        if (!hasFasterBot) {
+            // 가장 빠른 봇 찾기
+            let fastestBot = entries[0];
+            for (let i = 1; i < entries.length; i++) {
+                if (entries[i].time < fastestBot.time) fastestBot = entries[i];
+            }
+            // 유저 기록보다 100~500ms 더 빠른 시간으로 업데이트 (최소 5000ms 보장)
+            const randomOvertakeGap = Math.floor(Math.random() * 401) + 100;
+            fastestBot.time = Math.max(5000, userTime - randomOvertakeGap);
+        }
+    }
+
+    // 3단계: 유저 정보 추가
     entries.push({
         id: userId,
         nickname: userNickname,
         country: userCountry,
         avatarUrl: userAvatarUrl,
         time: userTime,
-        rank: targetRank,
-        isCurrentUser: true,  // 리더보드에서 분홍 하이라이트 표시
-        isBot: false,         // 실제 유저임을 표시
+        rank: 0,              // 임시값, 정렬 후 다시 배정됨
+        isCurrentUser: true,  // 내 항목 표시
+        isBot: false,
     });
 
-    // 유저 아래 순위들: 유저보다 평균 500ms씩 느린 합성 플레이어 생성
-    let prevTime = userTime;
-    for (let rank = targetRank + 1; rank <= leagueSize; rank++) {
-        const increment = Math.abs(gaussianRandom(500, 200)); // 평균 500ms 증가, ±200ms 노이즈
-        prevTime = prevTime + increment; // 이전 플레이어보다 조금씩 느려짐
-        entries.push(createSyntheticEntry(rank, Math.round(prevTime), baseSeed + rank));
-    }
-
-    // ─── 4단계: 시간순 정렬 및 순위 재할당 ────────────────────────────
-    // 노이즈 추가로 인해 순서가 흐트러질 수 있으므로 실제 시간 기준으로 재정렬
-    entries.sort((a, b) => a.time - b.time); // 빠른 시간순(오름차순) 정렬
+    // 4단계: 전체 기록을 시간 오름차순(빠른 순)으로 정렬하고 순위 부여
+    entries.sort((a, b) => a.time - b.time);
     entries.forEach((entry, idx) => {
-        entry.rank = idx + 1; // 정렬 후 실제 순위 재할당 (1부터 시작)
+        entry.rank = idx + 1;
     });
 
     // 정렬 후 실제 유저의 최종 순위 확인
-    const actualUserRank = entries.findIndex((e) => e.isCurrentUser) + 1; // 0-indexed → 1-indexed
+    const actualUserRank = entries.findIndex((e) => e.isCurrentUser) + 1; // 1-indexed
 
-    // ─── 5단계: 리그 메타데이터 생성 ──────────────────────────────────
+    // 5단계: 리그 메타데이터 반환
     const totalLeagues = Math.round(gaussianRandom(TOTAL_LEAGUES_MEAN, TOTAL_LEAGUES_STD));
 
     return {
-        leagueId: generateLeagueId(userId),          // 이 유저만의 고유 리그 ID
-        leagueSize,                                   // 이 리그의 총 인원
-        totalLeagues: Math.max(3500, totalLeagues),   // UI에 표시할 전체 리그 수 (최소 3500)
-        lastRefresh: Date.now(),                      // 생성 시각 기록 (30분 후 갱신 판단에 사용)
-        entries,                                      // 정렬된 리더보드 항목 배열
-        userRank: actualUserRank,                     // 유저의 최종 순위
-        userBestAtGeneration: userTime,               // 생성 시점의 유저 최고 기록 (신기록 감지용)
+        leagueId: generateLeagueId(userId),          // 고유 리그 ID
+        leagueSize,                                   // 전체 인원수
+        totalLeagues: Math.max(3500, totalLeagues),   // UI용 활성 리그 수
+        lastRefresh: Date.now(),                      // 리그 생성/동기화 시점
+        entries,                                      // 정렬된 리그 배열
+        userRank: actualUserRank,                     // 유저의 현재 순위
+        userBestAtGeneration: userTime,               // 생성 당시 최고 기록
     };
 }
 
@@ -253,21 +253,24 @@ export function generateGuestShowcase(): { winners: LeaderboardEntry[]; totalLea
  * Shows a full league (60-99 players) without placing the user in it.
  * Used for the leaderboard screen when user hasn't played yet.
  */
-export function generateViewOnlyLeague(userId: string): LeagueData {
+export function generateViewOnlyLeague(
+    userId: string,
+    botConfig: { mean: number; stdDev: number } = { mean: 50000, stdDev: 15000 }
+): LeagueData {
     const leagueSize = getLeagueSize(userId);
     const totalLeagues = Math.round(gaussianRandom(TOTAL_LEAGUES_MEAN, TOTAL_LEAGUES_STD));
-    const baseSeed = Math.abs(hashCode(userId + 'view_league'));
+    const baseSeed = Math.abs(hashCode(userId + 'view_league_v4'));
 
-    // Generate rank 1 time: realistic top time
-    const rank1Time = Math.round(8000 + Math.abs(gaussianRandom(3000, 1500))); // 8s ~ 14s
+    const MEAN_TIME = botConfig.mean;
+    const STD_DEV = botConfig.stdDev;
 
     const entries: LeaderboardEntry[] = [];
-    let prevTime = rank1Time;
 
-    for (let rank = 1; rank <= leagueSize; rank++) {
-        entries.push(createSyntheticEntry(rank, prevTime, baseSeed + rank));
-        const increment = Math.abs(gaussianRandom(500, 200));
-        prevTime = prevTime + increment;
+    for (let i = 0; i < leagueSize; i++) {
+        const seed = baseSeed + i * 13;
+        let rawTime = Math.round(gaussianRandom(MEAN_TIME, STD_DEV));
+        rawTime = Math.max(5000, rawTime);
+        entries.push(createSyntheticEntry(0, rawTime, seed));
     }
 
     // Sort & re-assign ranks
@@ -296,15 +299,14 @@ export function refreshLeagueIfNeeded(
     userNickname: string,
     userCountry: string,
     userAvatarUrl: string,
+    botConfig: { mean: number; stdDev: number } = { mean: 50000, stdDev: 15000 }
 ): LeagueData | null {
     if (!userTime) return current; // 최고 기록이 없으면 리그 생성 불가
 
     const now = Date.now();
 
-    if (!current) {
-        // 처음 플레이 완료: 새로운 리그 생성 (이전 순위 없음, 신기록 아님)
-        return generateLeague(userTime, userId, userNickname, userCountry, userAvatarUrl, null, false);
-    }
+    // 만약 현재 리그가 없다면 즉시 생성합니다.
+    if (!current) return generateLeague(userTime, userId, userNickname, userCountry, userAvatarUrl, null, false, false, botConfig);
 
     const timeSinceRefresh = now - current.lastRefresh; // 마지막 갱신 후 경과 시간
     if (timeSinceRefresh < REFRESH_INTERVAL_MS) {
@@ -316,9 +318,10 @@ export function refreshLeagueIfNeeded(
         return current; // 30분 안 지났고 신기록도 아니면 기존 리그 유지
     }
 
-    // 30분 경과: 순위 연속성을 고려하여 리그 갱신
+    // 10분 경과: 순위 연속성을 고려하여 리그 갱신
     const hasNewBest = current.userBestAtGeneration !== null && userTime < current.userBestAtGeneration;
-    return generateLeague(userTime, userId, userNickname, userCountry, userAvatarUrl, current.userRank, hasNewBest);
+    const overtakeUser = current.userRank === 1; // 1위였다면 다음 갱신 때 봇이 추월함
+    return generateLeague(userTime, userId, userNickname, userCountry, userAvatarUrl, current.userRank, hasNewBest, overtakeUser, botConfig);
 }
 
 /**

@@ -249,6 +249,27 @@ export async function editUserHeartInFirestore(userId: string, hearts: number): 
     }
 }
 
+// ─── Firestore: 봇 설정 저장 및 불러오기 (Admin) ─────────────────────────
+export async function saveBotConfig(mean: number, stdDev: number): Promise<void> {
+    if (!db) return;
+    try {
+        await setDoc(doc(db, 'settings', 'botParams'), { mean, stdDev, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (err) {
+        console.error('[Firebase] Failed to save bot config:', err);
+    }
+}
+
+export async function getBotConfig(): Promise<{ mean: number, stdDev: number } | null> {
+    if (!db) return null;
+    try {
+        const snap = await getDoc(doc(db, 'settings', 'botParams'));
+        return snap.exists() ? (snap.data() as { mean: number, stdDev: number }) : null;
+    } catch (err) {
+        console.error('[Firebase] Failed to fetch bot config:', err);
+        return null;
+    }
+}
+
 // ─── 내부 인스턴스 재내보내기 ───────────────────────────────────────────
 // store.ts 등 다른 파일에서 auth, db 인스턴스에 직접 접근이 필요한 경우를 위해 노출
 export { auth, db };

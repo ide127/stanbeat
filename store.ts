@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { ActivityItem, GameRecord, LeaderboardEntry, User, ViewState } from './types';
+import { ActivityItem, HistoryEvent, LeaderboardEntry, User, ViewState, BotConfig } from './types';
 import { LanguageCode } from './i18n';
-import { isFirebaseEnabled, firebaseSignInWithGoogle, firebaseSignOut, saveUserProfile, saveScore, deleteAllScores, banUserInFirestore as banUserInFs, incrementGlobalStats, getGlobalStats, getAdminGlobalUsers, editUserHeartInFirestore } from './firebase';
+import { isFirebaseEnabled, firebaseSignInWithGoogle, firebaseSignOut, saveUserProfile, getUserProfile, saveScore, deleteAllScores, banUserInFirestore as banUserInFs, incrementGlobalStats, getGlobalStats, getAdminGlobalUsers, editUserHeartInFirestore, getBotConfig, saveBotConfig } from './firebase';
 import { listenForRewards, claimRewardInFirestore, getOfferwallUrl, getRewardedVideoUrl } from './adscend';
 import { type LeagueData, generateLeague, refreshLeagueIfNeeded, getGapToFirst, getRefreshCountdown, generateGuestShowcase, generateViewOnlyLeague, getMsUntilNextUtcMidnight } from './league';
 
@@ -45,6 +45,7 @@ interface AppState {
   league: LeagueData | null;
   adminUsers: Record<string, any>[];
   adminStats: { totalHeartsUsed: number, adRevenue: number };
+  botConfig: BotConfig;
 
   setView: (view: ViewState) => void;
   toggleMenu: () => void;
@@ -53,6 +54,8 @@ interface AppState {
   setShowNoticePopup: (value: boolean) => void;
   acceptTerms: () => void;
 
+  setBotConfig: (config: BotConfig) => void;
+
   login: () => Promise<void>;
   logout: () => void;
   consumeHeart: () => boolean;
@@ -60,7 +63,7 @@ interface AppState {
   claimDailyHeart: () => boolean;
 
   updateBestTime: (time: number) => void;
-  addGameRecord: (time: number) => void;
+  addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY', value: number) => void;
   fetchLeaderboard: () => void;
   initLeague: () => void;
   refreshLeague: () => void;
@@ -218,6 +221,7 @@ const savedLeaderboard = safeStorage.get<LeaderboardEntry[]>('stanbeat_leaderboa
 const savedUser = safeStorage.get<User | null>('stanbeat_user', null);
 const savedShowNotice = safeStorage.get<boolean>('stanbeat_show_notice', false);
 const savedAdConfig = safeStorage.get<AdConfig>('stanbeat_ad_config', DEFAULT_AD_CONFIG);
+const savedBotConfig = safeStorage.get<BotConfig>('stanbeat_bot_config', { mean: 50000, stdDev: 15000 });
 
 export const useStore = create<AppState>((set, get) => ({
   currentUser: savedUser ? normalizeHearts(savedUser) : null,
@@ -238,6 +242,7 @@ export const useStore = create<AppState>((set, get) => ({
   league: safeStorage.get<LeagueData | null>('stanbeat_league', null),
   adminUsers: [],
   adminStats: { totalHeartsUsed: 0, adRevenue: 0 },
+  botConfig: savedBotConfig,
 
   setView: (view) => set({ currentView: view }),
   toggleMenu: () => set((state) => ({ isMenuOpen: !state.isMenuOpen })),
@@ -266,6 +271,14 @@ export const useStore = create<AppState>((set, get) => ({
     set({ currentUser: nextUser, termsAccepted: true });
   },
 
+  setBotConfig: (config) => {
+    safeStorage.set('stanbeat_bot_config', config);
+    set({ botConfig: config });
+    if (isFirebaseEnabled) {
+      saveBotConfig(config.mean, config.stdDev).catch(console.error);
+    }
+  },
+
   // ─── 인증 (Auth) 로직 ─────────────────────────────────────────────────────
   // 구글 로그인을 처리하고 유저 데이터를 초기화하거나 기존 데이터를 불러오는 함수
   login: async () => {
@@ -277,6 +290,13 @@ export const useStore = create<AppState>((set, get) => ({
     // 파이어베이스(연동) 기능이 활성화되어 환경변수로 로드된 경우만 로그인 시도
     if (isFirebaseEnabled) {
       try {
+        // 인앱 브라우저(인스타그램, 페이스북, 카카오톡 등) 감지 및 경고
+        const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+        const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads/i.test(userAgent);
+        if (isEmbeddedBrowser) {
+          alert('인앱 브라우저에서는 구글 로그인이 차단될 수 있습니다. 오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어주세요.\n\nIn-app browsers may block Google Login. Please open in Chrome/Safari.');
+        }
+
         // 파이어베이스에서 제공하는 구글 팝업 로그인을 실행하여 결과를 받아옵니다.
         const fbUser = await firebaseSignInWithGoogle();
         // 로그인 결과가 없다면(팝업 닫힘 등) 에러를 발생시켜 catch 블록으로 넘깁니다.
@@ -304,21 +324,38 @@ export const useStore = create<AppState>((set, get) => ({
           referredBy: refCode, // URL에 추천인 코드가 있었다면 내 계정에 추천자(referredBy) 등록
         };
 
-        // 로컬 스토리지에 이전에 저장된 기존 유저 데이터가 있는지 확인
-        const existingUser = safeStorage.get<User | null>('stanbeat_user', null);
-        // 만약 기존 데이터가 있고, 그 아이디가 방금 로그인한 아이디와 같다면 재방문 유저로 간주
-        if (existingUser && existingUser.id === user.id) {
-          // 기존 유저의 데이터(하트, 기록, 동의 내역 등)를 덮어씌워 보존 처리합니다.
-          user.hearts = existingUser.hearts;
-          user.bestTime = existingUser.bestTime;
-          user.gameHistory = existingUser.gameHistory;
-          user.agreedToTerms = existingUser.agreedToTerms;
-          user.referralCode = existingUser.referralCode;
-          user.referredBy = existingUser.referredBy;
-          user.lastDailyHeart = existingUser.lastDailyHeart;
-          user.expiresAt = existingUser.expiresAt;
-          user.role = existingUser.role;
-          user.banned = existingUser.banned;
+        // 파이어베이스(Firestore)에서 기존 데이터가 있는지 먼저 확인합니다.
+        const fbProfile = await getUserProfile(user.id);
+
+        if (fbProfile) {
+          user.nickname = (fbProfile.nickname as string) || user.nickname;
+          user.avatarUrl = (fbProfile.avatarUrl as string) || user.avatarUrl;
+          user.country = (fbProfile.country as string) || user.country;
+          if (fbProfile.hearts !== undefined) user.hearts = Number(fbProfile.hearts);
+          if (fbProfile.bestTime !== undefined) user.bestTime = Number(fbProfile.bestTime) || null;
+          if (fbProfile.gameHistory) user.gameHistory = fbProfile.gameHistory as HistoryEvent[];
+          if (fbProfile.agreedToTerms !== undefined) user.agreedToTerms = Boolean(fbProfile.agreedToTerms);
+          if (fbProfile.referralCode) user.referralCode = fbProfile.referralCode as string;
+          if (fbProfile.referredBy) user.referredBy = fbProfile.referredBy as string;
+          if (fbProfile.lastDailyHeart) user.lastDailyHeart = fbProfile.lastDailyHeart as string;
+          if (fbProfile.expiresAt) user.expiresAt = Number(fbProfile.expiresAt);
+          if (fbProfile.role) user.role = fbProfile.role as 'USER' | 'ADMIN';
+          if (fbProfile.banned !== undefined) user.banned = Boolean(fbProfile.banned);
+        } else {
+          // Firestore 계정이 없지만 로컬 스토리지에 이전에 저장된 기존 유저 데이터가 있는지 확인
+          const existingUser = safeStorage.get<User | null>('stanbeat_user', null);
+          if (existingUser && existingUser.id === user.id) {
+            user.hearts = existingUser.hearts;
+            user.bestTime = existingUser.bestTime;
+            user.gameHistory = existingUser.gameHistory;
+            user.agreedToTerms = existingUser.agreedToTerms;
+            user.referralCode = existingUser.referralCode;
+            user.referredBy = existingUser.referredBy;
+            user.lastDailyHeart = existingUser.lastDailyHeart;
+            user.expiresAt = existingUser.expiresAt;
+            user.role = existingUser.role;
+            user.banned = existingUser.banned;
+          }
         }
 
         // 새롭게 만들어지거나 병합된 유저 데이터를 로컬 스토리지에 저장합니다.
@@ -333,9 +370,22 @@ export const useStore = create<AppState>((set, get) => ({
           avatarUrl: user.avatarUrl,
           country: user.country,
         }).catch(console.error); // 실패 시 콘솔에 에러만 기록
-      } catch (err) {
-        console.error('[Firebase Auth Error]', err); // 파이어베이스 로그인 오류 콘솔 출력
-        throw err;
+
+        if (user.banned) {
+          alert('이 계정은 이용이 정지되었습니다.\nThis account has been suspended.');
+          return;
+        }
+
+      } catch (error: any) {
+        // 로그인이 실패하거나 여러 이유로 진행할 수 없었을 때 발생
+        console.error('Google login failed:', error);
+
+        // 403 disallowed_useragent 에러 (보통 인앱 브라우저 등에서 구글이 차단할 때 발생)
+        if (error?.message?.includes('disallowed_useragent') || error?.code === 'auth/unauthorized-domain' || error?.message?.includes('403')) {
+          alert('보안상의 이유로 현재 브라우저에서는 구글 로그인을 진행할 수 없습니다.\n오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어 다시 시도해주세요.\n\nGoogle Login is blocked in this browser. Please open in Chrome/Safari.');
+        } else {
+          alert('구글 로그인에 실패했습니다. 다시 시도해주세요.\nGoogle login failed. Please try again.');
+        }
       }
     } else {
       // Mock login (for development without Firebase)
@@ -405,10 +455,14 @@ export const useStore = create<AppState>((set, get) => ({
     const user = get().currentUser;
     if (!user || user.banned) return;
     const normalized = normalizeHearts(user);
+    const record: HistoryEvent | null = amount > 0 ? { type: 'AD', value: amount, date: new Date().toISOString() } : null;
+    const nextHistory = record ? [...normalized.gameHistory, record] : normalized.gameHistory;
+
     const updatedUser = {
       ...normalized,
-      hearts: Math.min(normalized.hearts + amount, 3),
+      hearts: normalized.hearts + amount,
       expiresAt: Date.now() + THREE_HOURS,
+      gameHistory: nextHistory,
     };
 
     // Track globally (approximation of ad revenue triggered by heart addition logic)
@@ -432,11 +486,13 @@ export const useStore = create<AppState>((set, get) => ({
       set({ currentUser: normalized });
       return false;
     }
+    const record: HistoryEvent = { type: 'DAILY', value: 1, date: new Date().toISOString() };
     const updatedUser = {
       ...normalized,
       hearts: Math.min(normalized.hearts + 1, 3),
       lastDailyHeart: todayUtc(),
       expiresAt: Date.now() + THREE_HOURS,
+      gameHistory: [...normalized.gameHistory, record],
     };
     safeStorage.set('stanbeat_user', updatedUser);
     set({ currentUser: updatedUser });
@@ -445,6 +501,11 @@ export const useStore = create<AppState>((set, get) => ({
 
   // ─── 최고 기록 갱신 및 Firestore 저장 ──────────────────────────────
   updateBestTime: (time) => {
+    if (time < 5000) {
+      console.warn(`[Anti-Cheat] Rejected impossible time: ${time}ms`);
+      return;
+    }
+
     const user = get().currentUser;
     if (!user || user.banned) return;
 
@@ -470,13 +531,18 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  addGameRecord: (time) => {
+  addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY', value: number) => {
     const user = get().currentUser;
     if (!user) return;
-    const record: GameRecord = { time, date: new Date().toISOString() };
-    const nextUser = { ...user, gameHistory: [...user.gameHistory, record] };
+    const record: HistoryEvent = { type, value, date: new Date().toISOString() };
+    const nextUser = { ...user, gameHistory: [...user.gameHistory, record].slice(-100) };
     safeStorage.set('stanbeat_user', nextUser);
     set({ currentUser: nextUser });
+
+    // 비동기 동작, 실패해도 화면엔 영향 없도록 catch
+    if (isFirebaseEnabled && nextUser.id && type === 'PLAY') {
+      import('./firebase').then(m => m.saveUserProfile(nextUser.id, { gameHistory: nextUser.gameHistory }).catch(console.error));
+    }
   },
 
   // ─── 리더보드 데이터 호출 및 리그 로딩 ─────────────────────────────
@@ -495,8 +561,8 @@ export const useStore = create<AppState>((set, get) => ({
     if (current && !current.bestTime) {
       const existingLeague = get().league;
       if (!existingLeague || existingLeague.userBestAtGeneration !== null) {
-        // Generate fresh view-only league
-        const viewLeague = generateViewOnlyLeague(current.id);
+        // userBestAtGeneration이 null이 아니면(임시게스트가 아니면) 게스트 전용 뷰 생성
+        const viewLeague = generateViewOnlyLeague(current.id, get().botConfig);
         safeStorage.set('stanbeat_league', viewLeague);
         set({ league: viewLeague, leaderboard: viewLeague.entries });
       } else {
@@ -520,6 +586,7 @@ export const useStore = create<AppState>((set, get) => ({
       user.nickname,
       user.country,
       user.avatarUrl,
+      get().botConfig
     );
     if (league && league !== currentLeague) {
       safeStorage.set('stanbeat_league', league);
@@ -542,6 +609,8 @@ export const useStore = create<AppState>((set, get) => ({
       user.avatarUrl,
       currentLeague?.userRank ?? null,
       hasNewBest,
+      currentLeague?.userRank === 1, // overtakeUser
+      get().botConfig
     );
     safeStorage.set('stanbeat_league', league);
     set({ league, leaderboard: league.entries });
@@ -735,10 +804,12 @@ export const useStore = create<AppState>((set, get) => ({
       if (nextCount >= config.videosPerHeart) {
         // Reset count and grant heart
         const normalized = normalizeHearts(user);
+        const record: HistoryEvent = { type: 'AD', value: config.rewardedVideoRewardHearts, date: new Date().toISOString() };
         const updatedUser = {
           ...normalized,
           hearts: Math.min(normalized.hearts + config.rewardedVideoRewardHearts, 3),
           expiresAt: Date.now() + THREE_HOURS,
+          gameHistory: [...normalized.gameHistory, record],
         };
         const newRevenue = get().adRevenue + 0.35;
         safeStorage.set('stanbeat_user', updatedUser);
