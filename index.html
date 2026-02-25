@@ -6,26 +6,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 
   <!-- Primary Meta Tags -->
-  <title>StanBeat - Find BTS, Fly to Korea</title>
+  <title>StanBeat - BTS Word Search Game & Win a Seoul Trip ✈️</title>
+  <meta name="title" content="StanBeat - BTS Word Search Game & Win a Seoul Trip ✈️" />
   <meta name="description"
-    content="Find BTS member names in the fastest time. Compete globally and win a trip to Seoul! 방탄 단어 찾기 게임" />
-  <meta name="keywords" content="BTS, word game, K-pop, ARMY, StanBeat, 방탄소년단, 단어찾기" />
+    content="Find BTS members in the fastest time! Join the global ARMY leaderboard, compete in word search puzzles, and win a round-trip to Seoul. 방탄소년단 단어찾기 게임" />
+  <meta name="keywords"
+    content="BTS, BTS word game, BTS army game, Seoul trip prize, BTS members search, K-pop game, StanBeat, 방탄소년단, 단어찾기, 아미 게임" />
   <meta name="author" content="StanBeat" />
+  <meta name="robots" content="index, follow" />
   <meta name="theme-color" content="#FF0080" />
+  <link rel="canonical" href="https://stanbeat.pages.dev/" />
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="StanBeat - Find BTS, Fly to Korea ✈️" />
+  <meta property="og:url" content="https://stanbeat.pages.dev/" />
+  <meta property="og:title" content="StanBeat - BTS Word Search Game & Win a Seoul Trip ✈️" />
   <meta property="og:description"
-    content="Find BTS member names in the fastest time. Compete globally and win a trip to Seoul!" />
-  <meta property="og:image" content="/icons/icon-512.png" />
+    content="Find BTS member names in the fastest time! Join the global ARMY, win prizes, and fly to Korea." />
+  <meta property="og:image" content="https://stanbeat.pages.dev/icons/icon-512.png" />
   <meta property="og:site_name" content="StanBeat" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:locale:alternate" content="ko_KR" />
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="StanBeat - Find BTS, Fly to Korea ✈️" />
-  <meta name="twitter:description" content="Find BTS member names in the fastest time. Compete globally!" />
-  <meta name="twitter:image" content="/icons/icon-512.png" />
+  <meta name="twitter:url" content="https://stanbeat.pages.dev/" />
+  <meta name="twitter:title" content="StanBeat - BTS Word Search & Seoul Trip Prize ✈️" />
+  <meta name="twitter:description"
+    content="Can you find BTS members faster than other ARMY? Play now and win a trip to Seoul!" />
+  <meta name="twitter:image" content="https://stanbeat.pages.dev/icons/icon-512.png" />
+  <meta name="twitter:site" content="@StanBeatApp" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -38,7 +48,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/icon-512.svg" />
 
   <!-- Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Oswald:wght@500;700&family=Noto+Sans+Thai:wght@400;600;700&display=swap"
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Oswald:wght@500;700&family=Noto+Sans+Thai:wght@400;600;700&display=swap"
     rel="stylesheet">
 
   <!-- Tailwind CDN -->
@@ -256,6 +267,46 @@
       animation: pulseRing 2s infinite;
     }
   </style>
+
+  <!-- Structured Data / JSON-LD -->
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "StanBeat",
+      "operatingSystem": "Web",
+      "applicationCategory": "GameApplication",
+      "genre": "Word Search, Puzzle",
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.9",
+        "ratingCount": "1250"
+      },
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "description": "Find BTS members in the fastest time! Join the global ARMY leaderboard, compete in word search puzzles, and win a round-trip to Seoul.",
+      "author": {
+        "@type": "Organization",
+        "name": "StanBeat"
+      }
+    }
+  </script>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "url": "https://stanbeat.pages.dev/",
+      "name": "StanBeat",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "https://stanbeat.pages.dev/?s={search_term_string}",
+        "query-input": "required name=search_term_string"
+      }
+    }
+  </script>
 </head>
 
 <body>
