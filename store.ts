@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { ActivityItem, HistoryEvent, LeaderboardEntry, User, ViewState, BotConfig } from './types';
 import { LanguageCode } from './i18n';
-import { isFirebaseEnabled, firebaseSignInWithGoogle, firebaseSignOut, saveUserProfile, getUserProfile, saveScore, deleteAllScores, banUserInFirestore as banUserInFs, incrementGlobalStats, getGlobalStats, getAdminGlobalUsers, editUserHeartInFirestore, getBotConfig, saveBotConfig } from './firebase';
+import { isFirebaseEnabled, firebaseSignInWithGoogle, firebaseSignOut, saveUserProfile, getUserProfile, saveScore, deleteAllScores, banUserInFirestore as banUserInFs, unbanUserInFirestore as unbanUserInFs, incrementGlobalStats, getGlobalStats, getAdminGlobalUsers, editUserHeartInFirestore, getBotConfig, saveBotConfig, listenGlobalStats } from './firebase';
 import { listenForRewards, claimRewardInFirestore, getOfferwallUrl, getRewardedVideoUrl } from './adscend';
 import { type LeagueData, generateLeague, refreshLeagueIfNeeded, getGapToFirst, getRefreshCountdown, generateGuestShowcase, generateViewOnlyLeague, getMsUntilNextUtcMidnight } from './league';
 
@@ -48,6 +48,10 @@ interface AppState {
   adminUsers: Record<string, any>[];
   adminStats: { totalHeartsUsed: number, adRevenue: number };
   botConfig: BotConfig;
+  adminLoading: boolean;
+  adminShowAll: boolean;
+  adminLog: Array<{ action: string; target: string; time: string }>;
+  adminStatsUnsubscribe: (() => void) | null;
 
   setView: (view: ViewState) => void;
   toggleMenu: () => void;
@@ -76,12 +80,17 @@ interface AppState {
   resetSeason: () => void;
   generateDummyBots: (count: number) => void;
   banUser: (id: string) => void;
+  unbanUser: (id: string) => void;
   editUserHeart: (id: string, hearts: number) => void;
   getReferralLink: () => string;
 
   // Admin
   toggleAdminRole: () => void;
   fetchAdminData: () => Promise<void>;
+  startAdminLiveStats: () => void;
+  stopAdminLiveStats: () => void;
+  setAdminShowAll: (value: boolean) => void;
+  addAdminLog: (action: string, target: string) => void;
 
   // Ad system
   setAdConfig: (config: Partial<AdConfig>) => void;
@@ -235,7 +244,7 @@ const generateDynamicFeed = (): ActivityItem[] => {
 
 const defaultFeed: ActivityItem[] = generateDynamicFeed();
 
-const savedLang = safeStorage.get<LanguageCode>('stanbeat_lang', 'ko');
+const savedLang = safeStorage.get<LanguageCode>('stanbeat_lang', 'en');
 const savedNotice = safeStorage.get<string>('stanbeat_notice', '');
 const savedLeaderboard = safeStorage.get<LeaderboardEntry[]>('stanbeat_leaderboard', mockLeaderboardBase);
 const savedUser = safeStorage.get<User | null>('stanbeat_user', null);
@@ -264,6 +273,10 @@ export const useStore = create<AppState>((set, get) => ({
   league: safeStorage.get<LeagueData | null>('stanbeat_league', null),
   adminUsers: [],
   adminStats: { totalHeartsUsed: 0, adRevenue: 0 },
+  adminLoading: false,
+  adminShowAll: false,
+  adminLog: [],
+  adminStatsUnsubscribe: null,
   botConfig: savedBotConfig,
 
   setView: (view) => {
@@ -727,38 +740,51 @@ export const useStore = create<AppState>((set, get) => ({
       banUserInFs(id);
     }
     const combined = get().leaderboard.map((entry) => (entry.id === id ? { ...entry, banned: true } : entry));
-
-    // Update admin users list as well
     const updatedAdminUsers = get().adminUsers.map(user =>
       user.id === id ? { ...user, banned: true } : user
     );
-
     safeStorage.set('stanbeat_leaderboard', combined);
     set({ leaderboard: combined, adminUsers: updatedAdminUsers });
+    get().addAdminLog('BAN', id);
+  },
+
+  unbanUser: (id) => {
+    if (isFirebaseEnabled) {
+      unbanUserInFs(id);
+    }
+    const combined = get().leaderboard.map((entry) => (entry.id === id ? { ...entry, banned: false } : entry));
+    const updatedAdminUsers = get().adminUsers.map(user =>
+      user.id === id ? { ...user, banned: false } : user
+    );
+    safeStorage.set('stanbeat_leaderboard', combined);
+    set({ leaderboard: combined, adminUsers: updatedAdminUsers });
+    get().addAdminLog('UNBAN', id);
   },
 
   editUserHeart: (id, hearts) => {
+    const clampedHearts = Math.max(0, hearts);
     if (isFirebaseEnabled) {
-      editUserHeartInFirestore(id, hearts);
+      editUserHeartInFirestore(id, clampedHearts);
     }
 
     const user = get().currentUser;
     if (user && user.id === id) {
-      const updatedUser = { ...user, hearts: Math.max(0, Math.min(3, hearts)), expiresAt: Date.now() + THREE_HOURS };
+      const updatedUser = { ...user, hearts: clampedHearts, expiresAt: Date.now() + THREE_HOURS };
       safeStorage.set('stanbeat_user', updatedUser);
       set({ currentUser: updatedUser });
     }
 
     const combined = get().leaderboard.map((entry) =>
-      entry.id === id ? { ...entry, hearts: Math.max(0, Math.min(3, hearts)) } : entry
+      entry.id === id ? { ...entry, hearts: clampedHearts } : entry
     );
 
     const updatedAdminUsers = get().adminUsers.map(user =>
-      user.id === id ? { ...user, hearts: Math.max(0, Math.min(3, hearts)) } : user
+      user.id === id ? { ...user, hearts: clampedHearts } : user
     );
 
     safeStorage.set('stanbeat_leaderboard', combined);
     set({ leaderboard: combined, adminUsers: updatedAdminUsers });
+    get().addAdminLog('HEART_EDIT', `${id} → ${clampedHearts}`);
   },
 
   getReferralLink: () => {
@@ -784,6 +810,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   fetchAdminData: async () => {
     if (!isFirebaseEnabled) return;
+    set({ adminLoading: true });
     try {
       const stats = await getGlobalStats();
       const users = await getAdminGlobalUsers();
@@ -793,11 +820,34 @@ export const useStore = create<AppState>((set, get) => ({
           totalHeartsUsed: Number(stats?.totalHeartsUsed || 0),
           adRevenue: Number(stats?.adRevenue || 0),
         },
-        adminUsers: users
+        adminUsers: users,
+        adminLoading: false,
       });
     } catch (e) {
       console.error('Failed to fetch admin data:', e);
+      set({ adminLoading: false });
     }
+  },
+
+  startAdminLiveStats: () => {
+    const existing = get().adminStatsUnsubscribe;
+    if (existing) existing();
+    const unsub = listenGlobalStats((stats) => {
+      set({ adminStats: stats });
+    });
+    set({ adminStatsUnsubscribe: unsub });
+  },
+
+  stopAdminLiveStats: () => {
+    const unsub = get().adminStatsUnsubscribe;
+    if (unsub) { unsub(); set({ adminStatsUnsubscribe: null }); }
+  },
+
+  setAdminShowAll: (value) => set({ adminShowAll: value }),
+
+  addAdminLog: (action, target) => {
+    const entry = { action, target, time: new Date().toISOString() };
+    set({ adminLog: [...get().adminLog, entry].slice(-50) });
   },
 
   // ─── Ad System ──────────────────────────────────────────────────

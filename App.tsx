@@ -959,14 +959,18 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 const AdminScreen = () => {
   const {
     setView, leaderboard, notice, setNotice,
-    resetSeason, banUser, currentUser, editUserHeart,
+    resetSeason, banUser, unbanUser, currentUser, editUserHeart,
     showNoticePopup, setShowNoticePopup, language,
     adminStats, adminUsers, fetchAdminData,
-    botConfig, setBotConfig,
+    botConfig, setBotConfig, generateDummyBots,
+    adminLoading, adminShowAll, setAdminShowAll,
+    adminLog, startAdminLiveStats, stopAdminLiveStats,
   } = useStore();
 
   useEffect(() => {
     fetchAdminData();
+    startAdminLiveStats();
+    return () => stopAdminLiveStats();
   }, []);
 
   const [noticeDraft, setNoticeDraft] = useState(notice);
@@ -974,6 +978,9 @@ const AdminScreen = () => {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [adminSearchQuery, setAdminSearchQuery] = useState('');
   const [adminSortBy, setAdminSortBy] = useState<'TIME' | 'HEARTS' | 'NEWEST'>('NEWEST');
+  const [showBanned, setShowBanned] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [botCount, setBotCount] = useState(5);
 
   if (currentUser?.role !== 'ADMIN') return <div className="flex-1 p-4 flex items-center justify-center text-white/50">Unauthorized Access</div>;
 
@@ -987,8 +994,11 @@ const AdminScreen = () => {
 
   const riskWarning = leaderboard.some((entry) => entry.time <= 1000);
 
-  // DAU Calculation: count users who logged in/updated today
+  // DAU Calculation + User stats
   const todayStr = new Date().toISOString().slice(0, 10);
+  const totalUsers = adminUsers.length;
+  const bannedUsers = adminUsers.filter(u => u.banned).length;
+  const activeUsers = totalUsers - bannedUsers;
   const dau = adminUsers.length > 0
     ? adminUsers.filter(u => {
       if (u.banned) return false;
@@ -1000,6 +1010,21 @@ const AdminScreen = () => {
     }).length
     : leaderboard.filter((entry) => !entry.banned).length;
 
+  // CSV Export (#12)
+  const handleExportCSV = () => {
+    const headers = ['ID', 'Nickname', 'Email', 'Country', 'Hearts', 'Best Time', 'Banned', 'Referral Code'];
+    const rows = adminUsers.map(u => [
+      u.id, u.nickname || '', u.email || '', u.country || '',
+      u.hearts ?? '', u.time ?? '', u.banned ? 'YES' : 'NO', u.referralCode || '',
+    ]);
+    const csv = [headers, ...rows].map(r => r.map((c: string) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `stanbeat-users-${todayStr}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex-1 p-4 overflow-y-auto space-y-4">
       <div className="flex items-center justify-between">
@@ -1008,8 +1033,18 @@ const AdminScreen = () => {
           <h2 className="text-white font-black text-xl">{t(language, 'adminTitle')}</h2>
           <span className="text-[10px] bg-[#FF0080]/20 text-[#FF0080] border border-[#FF0080] px-3 py-0.5 rounded-full font-bold shadow-[0_0_10px_rgba(255,0,128,0.3)] tracking-widest">👑 GOD MODE ACTIVE</span>
         </div>
-        <div className="w-5" />
+        <button onClick={() => { vibrate(); fetchAdminData(); }} className="text-[#00FFFF] btn-squishy" aria-label="Refresh" title="Refresh Data">
+          <RefreshCw size={20} className={adminLoading ? 'animate-spin' : ''} />
+        </button>
       </div>
+
+      {/* Loading Indicator (#8) */}
+      {adminLoading && (
+        <div className="flex items-center justify-center py-2">
+          <div className="w-5 h-5 border-2 border-[#00FFFF] border-t-transparent rounded-full animate-spin mr-2" />
+          <span className="text-white/50 text-xs">Loading admin data...</span>
+        </div>
+      )}
 
       {/* Metrics */}
       <div className="grid grid-cols-2 gap-3">
@@ -1019,11 +1054,26 @@ const AdminScreen = () => {
         <MetricCard label="Risk Meter" value={riskWarning ? 'Warning' : 'Normal'} icon={<ShieldAlert />} color={riskWarning ? 'text-red-400' : 'text-[#00FFFF]'} />
       </div>
 
+      {/* User Stats Summary (#9) */}
+      <div className="flex items-center justify-between bg-black/30 rounded-lg px-3 py-2 text-xs text-white/70 border border-white/5">
+        <span>👥 Total: <strong className="text-white">{totalUsers}</strong></span>
+        <span>✅ Active: <strong className="text-green-400">{activeUsers}</strong></span>
+        <span>🚫 Banned: <strong className="text-red-400">{bannedUsers}</strong></span>
+      </div>
+
       {/* Season + Bots */}
       <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-3">
-        <button onClick={() => { vibrate(); resetSeason(); }} className="w-full bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg py-2 flex items-center justify-center gap-2 btn-squishy">
+        <button onClick={() => { vibrate(); if (confirm('⚠️ Are you sure you want to reset the season? This will DELETE all leaderboard data.')) { resetSeason(); } }} className="w-full bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg py-2 flex items-center justify-center gap-2 btn-squishy">
           <Trash2 size={16} /> {t(language, 'resetSeasonBtn')}
         </button>
+
+        {/* Bot Generation (#10) */}
+        <div className="flex items-center gap-2">
+          <input type="number" min={1} max={50} value={botCount} onChange={e => setBotCount(Math.max(1, Math.min(50, Number(e.target.value))))} className="w-16 bg-black/30 border border-white/20 text-white rounded px-2 py-1 text-sm outline-none" />
+          <button onClick={() => { vibrate(); if (confirm(`Generate ${botCount} dummy bots?`)) { generateDummyBots(botCount); } }} className="flex-1 bg-purple-500/20 border border-purple-500/40 text-purple-300 rounded-lg py-2 text-sm font-bold btn-squishy">
+            🤖 Generate {botCount} Bots
+          </button>
+        </div>
 
         <div className="pt-2 border-t border-white/10">
           <p className="text-[#00FFFF] font-semibold mb-2 text-sm flex items-center gap-1">🤖 봇 설정 (Bot Settings)</p>
@@ -1074,6 +1124,17 @@ const AdminScreen = () => {
           </div>
         </div>
 
+        {/* Filter toggles + Export */}
+        <div className="flex items-center gap-3 text-[10px]">
+          <label className="flex items-center gap-1 text-white/50 cursor-pointer">
+            <input type="checkbox" checked={showBanned} onChange={e => setShowBanned(e.target.checked)} className="accent-red-500" />
+            Show Banned
+          </label>
+          <button onClick={() => { vibrate(); handleExportCSV(); }} className="ml-auto text-[#00FFFF] border border-[#00FFFF]/30 px-2 py-0.5 rounded btn-squishy hover:bg-[#00FFFF]/10">
+            📥 Export CSV
+          </button>
+        </div>
+
         {(() => {
           type AdminListEntry = {
             id: string;
@@ -1099,13 +1160,14 @@ const AdminScreen = () => {
           };
 
           const sortedUsers = [...(adminUsers.length > 0 ? adminUsers : leaderboard) as AdminListEntry[]].filter(u => {
-            if (u.banned) return false;
-            // Fuzzy search
+            if (!showBanned && u.banned) return false;
+            // Fuzzy search (#6 includes email)
             if (adminSearchQuery) {
               const q = adminSearchQuery.toLowerCase();
               const nn = (u.nickname || '').toLowerCase();
               const id = (u.id || '').toLowerCase();
-              if (!nn.includes(q) && !id.includes(q)) return false;
+              const email = (u.email || '').toLowerCase();
+              if (!nn.includes(q) && !id.includes(q) && !email.includes(q)) return false;
             }
             return true;
           }).sort((a, b) => {
@@ -1124,50 +1186,65 @@ const AdminScreen = () => {
             );
           }
 
-          return sortedUsers.slice(0, 20).map((entry) => {
-            const isSelected = selectedUserId === entry.id;
-            const lastLoginMs = getUpdatedAtMs(entry.updatedAt);
-            const lastLogin = lastLoginMs > 0 ? new Date(lastLoginMs).toLocaleString() : 'Unknown';
-            const history = Array.isArray(entry.gameHistory) ? entry.gameHistory : [];
-            const playHistoryCount = history.filter((h) => h.type === 'PLAY').length;
-            const adRevenueApprox = history.filter((h) => h.type === 'AD').reduce((acc, val) => acc + (val.value > 0 ? 0.35 : 0), 0).toFixed(2);
+          const displayLimit = adminShowAll ? sortedUsers.length : 20;
 
-            return (
-              <div key={entry.id} className={`flex flex-col bg-black/20 p-2 rounded transition-all ${isSelected ? 'ring-1 ring-[#00FFFF]' : ''}`}>
-                <div className="flex items-center justify-between cursor-pointer" onClick={() => setSelectedUserId(isSelected ? null : entry.id)}>
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <img src={entry.avatarUrl || `https://picsum.photos/seed/${entry.id}/80/80`} width="40" height="40" className="w-8 h-8 rounded-full flex-shrink-0 border border-white/10" />
-                    <div className="min-w-0">
-                      <p className="text-white text-sm truncate font-bold">{entry.nickname || 'Unknown User'}</p>
-                      <div className="flex items-center gap-2 text-white/50 text-[10px]">
-                        <span>{getCountryFlag(entry.country || 'ZZ')}</span>
-                        {entry.time && <span className="text-[#00FFFF] font-mono">{formatTime(entry.time)}</span>}
-                        {entry.hearts !== undefined && <span className="text-[#FF0080]">❤️{entry.hearts}</span>}
-                        <span className="text-yellow-500">{entry.role === 'ADMIN' ? '[ADMIN]' : ''}</span>
+          return (
+            <>
+              {sortedUsers.slice(0, displayLimit).map((entry) => {
+                const isSelected = selectedUserId === entry.id;
+                const lastLoginMs = getUpdatedAtMs(entry.updatedAt);
+                const lastLogin = lastLoginMs > 0 ? new Date(lastLoginMs).toLocaleString() : 'Unknown';
+                const history = Array.isArray(entry.gameHistory) ? entry.gameHistory : [];
+                const playHistoryCount = history.filter((h) => h.type === 'PLAY').length;
+                const adRevenueApprox = history.filter((h) => h.type === 'AD').reduce((acc, val) => acc + (val.value > 0 ? 0.35 : 0), 0).toFixed(2);
+
+                return (
+                  <div key={entry.id} className={`flex flex-col bg-black/20 p-2 rounded transition-all ${isSelected ? 'ring-1 ring-[#00FFFF]' : ''} ${entry.banned ? 'opacity-50' : ''}`}>
+                    <div className="flex items-center justify-between cursor-pointer" onClick={() => setSelectedUserId(isSelected ? null : entry.id)}>
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <img src={entry.avatarUrl || `https://picsum.photos/seed/${entry.id}/80/80`} width="40" height="40" className="w-8 h-8 rounded-full flex-shrink-0 border border-white/10" />
+                        <div className="min-w-0">
+                          <p className="text-white text-sm truncate font-bold">{entry.nickname || 'Unknown User'}</p>
+                          <div className="flex items-center gap-2 text-white/50 text-[10px]">
+                            <span>{getCountryFlag(entry.country || 'ZZ')}</span>
+                            {entry.time && <span className="text-[#00FFFF] font-mono">{formatTime(entry.time)}</span>}
+                            {entry.hearts !== undefined && <span className="text-[#FF0080]">❤️{entry.hearts}</span>}
+                            <span className="text-yellow-500">{entry.role === 'ADMIN' ? '[ADMIN]' : ''}</span>
+                            {entry.banned && <span className="text-red-400">[BANNED]</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {currentUser?.id !== entry.id && !entry.banned && (
+                          <button onClick={(e) => { e.stopPropagation(); vibrate(); if (confirm(`Ban user "${entry.nickname || entry.id}"?`)) banUser(entry.id); }} className="bg-red-500/20 text-red-500 border border-red-500/50 text-xs px-2 py-1 rounded btn-squishy">🚫 Ban</button>
+                        )}
+                        {currentUser?.id !== entry.id && entry.banned && (
+                          <button onClick={(e) => { e.stopPropagation(); vibrate(); if (confirm(`Unban user "${entry.nickname || entry.id}"?`)) unbanUser(entry.id); }} className="bg-green-500/20 text-green-400 border border-green-500/50 text-xs px-2 py-1 rounded btn-squishy">✅ Unban</button>
+                        )}
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {currentUser?.id !== entry.id && (
-                      <button onClick={(e) => { e.stopPropagation(); vibrate(); banUser(entry.id); }} className="bg-red-500/20 text-red-500 border border-red-500/50 text-xs px-2 py-1 rounded btn-squishy">🚫 Ban</button>
+
+                    {isSelected && (
+                      <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/70 space-y-1 bg-black/40 p-3 rounded-lg">
+                        <p><strong className="text-white/90">Email:</strong> {entry.email || 'N/A'}</p>
+                        <p><strong className="text-white/90">Last Login:</strong> {lastLogin}</p>
+                        <p><strong className="text-white/90">Country/Region:</strong> {entry.country} {getCountryFlag(entry.country)}</p>
+                        <p><strong className="text-white/90">Total Games Played:</strong> {playHistoryCount} times</p>
+                        <p><strong className="text-white/90">Est. Ad Revenue:</strong> ${adRevenueApprox}</p>
+                        <p><strong className="text-white/90">Referral Code:</strong> {entry.referralCode || 'N/A'}</p>
+                        {entry.referredBy && <p><strong className="text-white/90">Referred By:</strong> {entry.referredBy}</p>}
+                      </div>
                     )}
                   </div>
-                </div>
-
-                {isSelected && (
-                  <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/70 space-y-1 bg-black/40 p-3 rounded-lg">
-                    <p><strong className="text-white/90">Email:</strong> {entry.email || 'N/A'}</p>
-                    <p><strong className="text-white/90">Last Login:</strong> {lastLogin}</p>
-                    <p><strong className="text-white/90">Country/Region:</strong> {entry.country} {getCountryFlag(entry.country)}</p>
-                    <p><strong className="text-white/90">Total Games Played:</strong> {playHistoryCount} times</p>
-                    <p><strong className="text-white/90">Est. Ad Revenue:</strong> ${adRevenueApprox}</p>
-                    <p><strong className="text-white/90">Referral Code:</strong> {entry.referralCode || 'N/A'}</p>
-                    {entry.referredBy && <p><strong className="text-white/90">Referred By:</strong> {entry.referredBy}</p>}
-                  </div>
-                )}
-              </div>
-            );
-          });
+                );
+              })}
+              {sortedUsers.length > 20 && (
+                <button onClick={() => { vibrate(); setAdminShowAll(!adminShowAll); }} className="w-full text-center text-[#00FFFF] text-xs py-2 border border-[#00FFFF]/20 rounded mt-2 btn-squishy hover:bg-[#00FFFF]/10">
+                  {adminShowAll ? 'Show Less (20)' : `Load All (${sortedUsers.length})`}
+                </button>
+              )}
+            </>
+          );
         })()}
       </div>
 
@@ -1176,7 +1253,7 @@ const AdminScreen = () => {
         <p className="text-white/70 text-xs mb-1">{t(language, 'heartForceGive')} {selectedUserId ? `(${selectedUserId})` : ''}</p>
         <div className="flex items-center gap-2">
           <input
-            type="number" min={0} max={3} value={heartDraft}
+            type="number" min={0} max={99} value={heartDraft}
             onChange={(e) => setHeartDraft(Number(e.target.value))}
             className="w-16 bg-black/30 text-white rounded px-2 py-1"
           />
@@ -1187,6 +1264,29 @@ const AdminScreen = () => {
             {t(language, 'applyBtn')}
           </button>
         </div>
+      </div>
+
+      {/* Admin Activity Log (#11) */}
+      <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10">
+        <button onClick={() => setShowLog(!showLog)} className="flex items-center justify-between w-full text-white font-semibold text-sm">
+          📋 Admin Activity Log ({adminLog.length})
+          <span className="text-white/40 text-xs">{showLog ? '▲' : '▼'}</span>
+        </button>
+        {showLog && (
+          <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
+            {adminLog.length === 0 ? (
+              <p className="text-white/30 text-xs">No admin actions recorded this session.</p>
+            ) : (
+              [...adminLog].reverse().map((entry, i) => (
+                <div key={i} className="flex items-center gap-2 text-[10px] text-white/60 bg-black/20 rounded px-2 py-1">
+                  <span className={`font-bold ${entry.action === 'BAN' ? 'text-red-400' : entry.action === 'UNBAN' ? 'text-green-400' : 'text-[#00FFFF]'}`}>{entry.action}</span>
+                  <span className="truncate flex-1">{entry.target}</span>
+                  <span className="text-white/30 flex-shrink-0">{new Date(entry.time).toLocaleTimeString()}</span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {/* Ad Config Section */}
@@ -1547,7 +1647,7 @@ export default function App() {
       {/* In-App Browser Blocker Modal */}
       <Modal isOpen={showBrowserBlocker} onClose={() => setShowBrowserBlocker(false)} title="Browser Not Supported">
         <p className="text-white/80 text-sm mb-4 text-center">Google Login is blocked in in-app browsers (Instagram, Facebook, etc). Please copy the link and open it in Safari or Chrome.</p>
-        <button onClick={() => { vibrate(); navigator.clipboard.writeText('https://stanbeat.web.app').then(() => alert('Link copied! Paste in Chrome/Safari.')); }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy text-lg">
+        <button onClick={() => { vibrate(); navigator.clipboard.writeText('https://stanbeat.org').then(() => alert('Link copied! Paste in Chrome/Safari.')); }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy text-lg">
           Copy Link URL
         </button>
       </Modal>

@@ -49,13 +49,24 @@ export const Ticker = () => {
 };
 
 // ─── 상단 헤더 컴포넌트 (로고, 햄버거 메뉴, 하트 개수 표시) ───
-export const Header = () => {
-  const { currentUser, toggleMenu, setView, toggleAdminRole } = useStore();
+export const Header = ({ onOpenLanguage }: { onOpenLanguage: () => void }) => {
+  const { currentUser, toggleMenu, setView, toggleAdminRole, language } = useStore();
   const [pulse, setPulse] = useState(false);
   const [delta, setDelta] = useState<number | null>(null);
   const [prevHearts, setPrevHearts] = useState<number>(currentUser?.hearts ?? 0);
   const [adminFlash, setAdminFlash] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Language flag lookup from languageOptions
+  const currentFlag = (() => {
+    const langOpts: Record<string, string> = {
+      ko: '🇰🇷', en: '🇺🇸', ja: '🇯🇵', 'zh-CN': '🇨🇳', 'zh-TW': '🇹🇼',
+      id: '🇮🇩', th: '🇹🇭', vi: '🇻🇳', es: '🇪🇸', 'pt-BR': '🇧🇷',
+      fil: '🇵🇭', ru: '🇷🇺', fr: '🇫🇷', de: '🇩🇪', tr: '🇹🇷',
+      ar: '🇸🇦', ms: '🇲🇾', hi: '🇮🇳', it: '🇮🇹', pl: '🇵🇱',
+    };
+    return langOpts[language] || '🌐';
+  })();
 
   useEffect(() => {
     const hearts = currentUser?.hearts ?? 0;
@@ -84,9 +95,20 @@ export const Header = () => {
 
   return (
     <header className="sticky top-0 z-50 bg-[#1A0B2E]/90 backdrop-blur-md border-b border-[#FF0080]/30 px-4 py-3 flex justify-between items-center shadow-[0_4px_20px_rgba(255,0,128,0.2)]">
-      <button onClick={() => { vibrate(); toggleMenu(); }} className="text-[#00FFFF] btn-squishy neon-glow-icon" aria-label="Open Menu">
-        <Menu size={24} />
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={() => { vibrate(); toggleMenu(); }} className="text-[#00FFFF] btn-squishy neon-glow-icon" aria-label="Open Menu">
+          <Menu size={24} />
+        </button>
+        <button
+          onClick={() => { vibrate(); onOpenLanguage(); }}
+          className="flex items-center gap-0.5 bg-white/5 hover:bg-white/10 border border-white/10 px-2 py-1 rounded-full btn-squishy transition-all"
+          aria-label="Change Language"
+          title="Change Language"
+        >
+          <span className="text-base leading-none">{currentFlag}</span>
+          <Globe size={14} className="text-[#00FFFF] opacity-70" />
+        </button>
+      </div>
       {/* 5초(현재 3초) 롱프레스 시 관리자 모드(ADMIN) 토글 활성화 */}
       <div
         onClick={() => { vibrate(); setView('HOME'); }}
@@ -197,7 +219,7 @@ export const Layout = ({ children, onOpenLanguage, onOpenHearts }: { children?: 
     <div className="fixed inset-0 bg-gradient-to-br from-[#1A0B2E] via-[#0D0518] to-[#1A0B2E] animate-[bgShift_12s_ease-in-out_infinite_alternate] opacity-60" style={{ willChange: 'background-position' }} />
     <div className="fixed inset-0 bg-black/70 z-0" />
     <div className="w-full max-w-[430px] min-h-screen bg-[#0D0518]/85 relative z-10 shadow-2xl flex flex-col">
-      <Header />
+      <Header onOpenLanguage={onOpenLanguage} />
       <Ticker />
       <main className="flex-1 flex flex-col relative">{children}</main>
       <SideMenu onOpenLanguage={onOpenLanguage} onOpenHearts={onOpenHearts} />

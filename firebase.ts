@@ -199,6 +199,17 @@ export async function banUserInFirestore(userId: string): Promise<void> {
     }
 }
 
+// ─── Firestore: 사용자 밴 해제 (Admin) ────────────────────────────────
+export async function unbanUserInFirestore(userId: string): Promise<void> {
+    if (!db) return;
+    try {
+        await setDoc(doc(db, 'users', userId), { banned: false, updatedAt: serverTimestamp() }, { merge: true });
+        await setDoc(doc(db, 'leaderboard', userId), { banned: false, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (err) {
+        console.error('[Firebase] Failed to unban user:', err);
+    }
+}
+
 // ─── Firestore: 글로벌 통계(DAU, Revenue 등) 증가 ─────────────────────
 // 전역적으로 관리되는 통계(stats/global) 문서를 업데이트.
 export async function incrementGlobalStats(heartsDelta: number, revenueDelta: number): Promise<void> {
