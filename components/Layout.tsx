@@ -50,7 +50,7 @@ export const Ticker = () => {
 
 // ─── 상단 헤더 컴포넌트 (로고, 햄버거 메뉴, 하트 개수 표시) ───
 export const Header = ({ onOpenLanguage }: { onOpenLanguage: () => void }) => {
-  const { currentUser, toggleMenu, setView, toggleAdminRole, language } = useStore();
+  const { currentUser, currentView, toggleMenu, setView, toggleAdminRole, language } = useStore();
   const [pulse, setPulse] = useState(false);
   const [delta, setDelta] = useState<number | null>(null);
   const [prevHearts, setPrevHearts] = useState<number>(currentUser?.hearts ?? 0);
@@ -99,27 +99,36 @@ export const Header = ({ onOpenLanguage }: { onOpenLanguage: () => void }) => {
         <button onClick={() => { vibrate(); toggleMenu(); }} className="text-[#00FFFF] btn-squishy neon-glow-icon" aria-label="Open Menu">
           <Menu size={24} />
         </button>
+      </div>
+      <div className="flex items-center gap-2">
+        {/* 5초(현재 3초) 롱프레스 시 관리자 모드(ADMIN) 토글 활성화 */}
+        <div
+          onClick={() => {
+            if (currentView === 'GAME') {
+              const exitMsg = language === 'ko' ? '게임 중 돌아가면 사용한 하트는 반환되지 않습니다.\n정말 나가시겠습니까?' : 'If you leave now, your heart will not be returned.\nAre you sure?';
+              if (!confirm(exitMsg)) return;
+            }
+            vibrate();
+            setView('HOME');
+          }}
+          onPointerDown={handleLogoPointerDown}
+          onPointerUp={handleLogoPointerUp}
+          onPointerCancel={handleLogoPointerUp}
+          onPointerLeave={handleLogoPointerUp}
+          onContextMenu={(e) => { e.preventDefault(); }}
+          className={`font-display text-xl tracking-tighter text-white cursor-pointer hover:scale-105 transition-transform select-none ${adminFlash ? 'animate-pulse' : ''}`}
+        >
+          <span className={`neon-text ${adminFlash ? 'text-yellow-400' : 'text-[#FF0080]'}`}>STAN</span>BEAT
+        </div>
         <button
           onClick={() => { vibrate(); onOpenLanguage(); }}
-          className="flex items-center gap-0.5 bg-white/5 hover:bg-white/10 border border-white/10 px-2 py-1 rounded-full btn-squishy transition-all"
+          className="flex items-center gap-0.5 bg-white/5 hover:bg-white/10 border border-[#00FFFF]/30 px-2 py-1 rounded-full btn-squishy transition-all"
           aria-label="Change Language"
           title="Change Language"
         >
           <span className="text-base leading-none">{currentFlag}</span>
           <Globe size={14} className="text-[#00FFFF] opacity-70" />
         </button>
-      </div>
-      {/* 5초(현재 3초) 롱프레스 시 관리자 모드(ADMIN) 토글 활성화 */}
-      <div
-        onClick={() => { vibrate(); setView('HOME'); }}
-        onPointerDown={handleLogoPointerDown}
-        onPointerUp={handleLogoPointerUp}
-        onPointerCancel={handleLogoPointerUp}
-        onPointerLeave={handleLogoPointerUp}
-        onContextMenu={(e) => { e.preventDefault(); }}
-        className={`font-display text-xl tracking-tighter text-white cursor-pointer hover:scale-105 transition-transform select-none ${adminFlash ? 'animate-pulse' : ''}`}
-      >
-        <span className={`neon-text ${adminFlash ? 'text-yellow-400' : 'text-[#FF0080]'}`}>STAN</span>BEAT
       </div>
       <div className="flex items-center gap-1 bg-black/40 px-3 py-1 rounded-full border border-[#FF0080]/50 relative">
         <Heart size={16} className={`text-[#FF0080] fill-[#FF0080] transition-all duration-300 ${pulse ? 'scale-150 drop-shadow-[0_0_15px_rgba(255,0,128,1)]' : 'scale-100'}`} />

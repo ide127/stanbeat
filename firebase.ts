@@ -45,6 +45,7 @@ import {
     serverTimestamp,
     increment,
     onSnapshot,
+    where,
 } from 'firebase/firestore';
 
 // ─── Firebase 설정 객체 ──────────────────────────────────────────────────────
@@ -293,6 +294,23 @@ export async function getBotConfig(): Promise<{ mean: number, stdDev: number } |
     } catch (err) {
         console.error('[Firebase] Failed to fetch bot config:', err);
         return null;
+    }
+}
+
+export async function rewardReferrer(referralCode: string): Promise<void> {
+    if (!db) return;
+    try {
+        const q = query(collection(db, 'users'), where('referralCode', '==', referralCode), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+            const referrerDoc = snap.docs[0];
+            await setDoc(doc(db, 'users', referrerDoc.id), {
+                hearts: increment(1),
+                updatedAt: serverTimestamp()
+            }, { merge: true });
+        }
+    } catch (err) {
+        console.error('[Firebase] Failed to reward referrer:', err);
     }
 }
 

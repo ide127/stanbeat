@@ -306,6 +306,18 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     }
   }, [won, elapsed, updateBestTime, addHistoryEvent, words]);
 
+  // Tab Visibility Anti-Cheat
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && !won) {
+        alert(language === 'ko' ? '게임 중 다른 화면으로 이동하여 게임이 취소되었습니다.' : 'Game cancelled because you switched tabs.');
+        setView('HOME');
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [won, language, setView]);
+
   const commitSelection = (ids: string[]) => {
     const text = ids.map((id) => grid.find((cell) => cell.id === id)?.letter ?? '').join('');
     const reverse = text.split('').reverse().join('');
@@ -420,7 +432,11 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
               <button onClick={() => setShowDevPanel((v) => !v)} className="text-[10px] text-yellow-400/70 border border-yellow-400/30 rounded px-2 py-0.5 btn-squishy">DEV</button>
             </div>
           )}
-          <button onClick={() => { vibrate(); setView('HOME'); }} className="text-white/70 hover:text-white btn-squishy">{t(language, 'exitGame')}</button>
+          <button onClick={() => {
+            const exitMsg = language === 'ko' ? '게임 중 돌아가면 사용한 하트는 반환되지 않습니다.\n정말 나가시겠습니까?' : 'If you leave now, your heart will not be returned.\nAre you sure?';
+            if (!confirm(exitMsg)) return;
+            vibrate(); setView('HOME');
+          }} className="text-white/70 hover:text-white btn-squishy">{t(language, 'exitGame')}</button>
         </div>
       </div>
 

@@ -104,7 +104,6 @@ const adjectives = ['Lovely', 'Shiny', 'Happy', 'Bright', 'Neon', 'Cute', 'Royal
 const favorites = ['Jimin', 'V', 'Tiger', 'Jungkook', 'Hobi', 'ARMY', 'Kookie'];
 const countries = ['KR', 'US', 'JP', 'BR', 'TH', 'ID', 'PH', 'FR', 'DE', 'VN'];
 const AVATAR_SEED = 'stanbeat-avatar';
-const THREE_HOURS = 3 * 60 * 60 * 1000;
 const MAX_HEARTS = 3;
 const MAX_HISTORY_ITEMS = 100;
 
@@ -358,7 +357,7 @@ export const useStore = create<AppState>((set, get) => ({
           country: 'KR', // 기본 국가 코드는 KR(한국)로 설정 (이후 서비스 로직에 따라 변경 가능)
           role: 'USER', // 기본 권한 레벨을 일반 사용자로 설정
           // 지급한 1개의 하트가 3시간 뒤에 만료되도록 만료 시간 계산하여 설정
-          expiresAt: Date.now() + THREE_HOURS,
+          expiresAt: null,
           lastDailyHeart: null, // 아직 일일 무료 하트를 받은 기록이 없으므로 null
           agreedToTerms: false, // 최초 로그인 시 약관 동의 절차를 거치지 않았으므로 false 설정
           banned: false, // 블랙리스트(차단) 상태를 기본값인 false로 설정
@@ -385,6 +384,10 @@ export const useStore = create<AppState>((set, get) => ({
           if (fbProfile.role) user.role = fbProfile.role as 'USER' | 'ADMIN';
           if (fbProfile.banned !== undefined) user.banned = Boolean(fbProfile.banned);
         } else {
+          // Firebase 계정이 신규 생성되었고 추천인 코드가 있다면 보상 로직 호출
+          if (isFirebaseEnabled && refCode) {
+            import('./firebase').then(m => m.rewardReferrer(refCode).catch(console.error));
+          }
           // Firestore 계정이 없지만 로컬 스토리지에 이전에 저장된 기존 유저 데이터가 있는지 확인
           const existingUser = safeStorage.get<User | null>('stanbeat_user', null);
           if (existingUser && existingUser.id === user.id) {
@@ -443,33 +446,6 @@ export const useStore = create<AppState>((set, get) => ({
           alert('구글 로그인에 실패했습니다. 다시 시도해주세요.\nGoogle login failed. Please try again.');
         }
       }
-    } else {
-      // Mock login (for development without Firebase)
-      return new Promise<void>((resolve) => {
-        setTimeout(() => {
-          const user: User = {
-            id: `user_${Math.floor(Math.random() * 99999)}`,
-            // 무조건 랜덤 닉네임 배정
-            nickname: generateNickname(),
-            avatarUrl: `https://picsum.photos/seed/${AVATAR_SEED}${Math.floor(Math.random() * 9999)}/100/100`,
-            email: 'army@example.com',
-            hearts: 1, // 신규 가입 시 하트 1개 지급
-            bestTime: null,
-            country: countries[Math.floor(Math.random() * countries.length)],
-            role: 'USER',
-            expiresAt: Date.now() + THREE_HOURS,
-            lastDailyHeart: null,
-            agreedToTerms: false,
-            banned: false,
-            gameHistory: [],
-            referralCode: generateReferralCode(),
-            referredBy: refCode,
-          };
-          safeStorage.set('stanbeat_user', user);
-          set({ currentUser: user, termsAccepted: false });
-          resolve();
-        }, 450);
-      });
     }
   },
 
@@ -506,6 +482,10 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     const updatedUser = { ...normalized, hearts: normalized.hearts - 1 };
+
+    if (isFirebaseEnabled && updatedUser.id) {
+      import('./firebase').then(m => m.saveUserProfile(updatedUser.id, { hearts: updatedUser.hearts }).catch(console.error));
+    }
     const newHeartsUsed = get().heartsUsedToday + 1;
     safeStorage.set('stanbeat_user', updatedUser);
     safeStorage.set('stanbeat_hearts_used', newHeartsUsed);
@@ -523,9 +503,12 @@ export const useStore = create<AppState>((set, get) => ({
     const updatedUser = {
       ...normalized,
       hearts: Math.max(0, Math.min(MAX_HEARTS, normalized.hearts + amount)),
-      expiresAt: Date.now() + THREE_HOURS,
       gameHistory: nextHistory.slice(-MAX_HISTORY_ITEMS),
     };
+
+    if (isFirebaseEnabled && updatedUser.id) {
+      import('./firebase').then(m => m.saveUserProfile(updatedUser.id, { hearts: updatedUser.hearts, gameHistory: updatedUser.gameHistory }).catch(console.error));
+    }
 
     // Track globally (approximation of ad revenue triggered by heart addition logic)
     const revDelta = amount > 0 ? 0.35 : 0;
@@ -564,9 +547,12 @@ export const useStore = create<AppState>((set, get) => ({
       ...normalized,
       hearts: Math.min(normalized.hearts + 1, MAX_HEARTS),
       lastDailyHeart: todayStr,
-      expiresAt: Date.now() + THREE_HOURS,
       gameHistory: [...normalized.gameHistory, record].slice(-MAX_HISTORY_ITEMS),
     };
+
+    if (isFirebaseEnabled && updatedUser.id) {
+      import('./firebase').then(m => m.saveUserProfile(updatedUser.id, { hearts: updatedUser.hearts, lastDailyHeart: updatedUser.lastDailyHeart, gameHistory: updatedUser.gameHistory }).catch(console.error));
+    }
     safeStorage.set('stanbeat_user', updatedUser);
     set({ currentUser: updatedUser });
     return true;
@@ -786,7 +772,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     const user = get().currentUser;
     if (user && user.id === id) {
-      const updatedUser = { ...user, hearts: clampedHearts, expiresAt: Date.now() + THREE_HOURS };
+      const updatedUser = { ...user, hearts: clampedHearts, expiresAt: null };
       safeStorage.set('stanbeat_user', updatedUser);
       set({ currentUser: updatedUser });
     }
@@ -925,7 +911,7 @@ export const useStore = create<AppState>((set, get) => ({
         const updatedUser = {
           ...normalized,
           hearts: Math.min(normalized.hearts + heartsReward, MAX_HEARTS),
-          expiresAt: Date.now() + THREE_HOURS,
+          expiresAt: null,
           gameHistory: [...normalized.gameHistory, record].slice(-MAX_HISTORY_ITEMS),
         };
         const newRevenue = get().adRevenue + 0.35;
