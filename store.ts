@@ -335,7 +335,7 @@ export const useStore = create<AppState>((set, get) => ({
       try {
         // 인앱 브라우저(인스타그램, 페이스북, 카카오톡 등) 감지 및 경고
         const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
-        const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads/i.test(userAgent);
+        const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads|TikTok|Daum/i.test(userAgent);
         if (isEmbeddedBrowser) {
           alert('인앱 브라우저에서는 구글 로그인이 차단될 수 있습니다. 오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어주세요.\n\nIn-app browsers may block Google Login. Please open in Chrome/Safari.');
         }
@@ -477,8 +477,14 @@ export const useStore = create<AppState>((set, get) => ({
     if (isFirebaseEnabled) {
       firebaseSignOut().catch(console.error);
     }
+    // Stop admin live stats listener if active
+    const unsub = get().adminStatsUnsubscribe;
+    if (unsub) { unsub(); }
+    // Unsubscribe ad reward listener if active
+    const adUnsub = get().rewardListenerUnsubscribe;
+    if (adUnsub) { adUnsub(); }
     safeStorage.set('stanbeat_user', null);
-    set({ currentUser: null, currentView: 'HOME', termsAccepted: false });
+    set({ currentUser: null, currentView: 'HOME', termsAccepted: false, videoWatchCount: 0, rewardListenerUnsubscribe: null, adminStatsUnsubscribe: null });
   },
 
   consumeHeart: () => {

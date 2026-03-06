@@ -1,8 +1,10 @@
 {
-    "name": "StanBeat - Find BTS, Fly to Korea",
+    "name": "StanBeat - BTS Word Search Game",
     "short_name": "StanBeat",
-    "description": "Find BTS member names in the fastest time. Win a trip to Seoul!",
-    "start_url": "/",
+    "description": "Find BTS member names in the fastest time! Compete with ARMY worldwide and win a trip to Seoul.",
+    "start_url": "https://stanbeat.org/",
+    "scope": "https://stanbeat.org/",
+    "id": "stanbeat-bts-game",
     "display": "standalone",
     "orientation": "portrait",
     "background_color": "#000000",
@@ -25,5 +27,8 @@
             "type": "image/svg+xml",
             "purpose": "maskable"
         }
-    ]
+    ],
+    "screenshots": [],
+    "related_applications": [],
+    "prefer_related_applications": false
 }

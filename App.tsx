@@ -12,6 +12,11 @@ const TARGET_WORDS = ['RM', 'JIN', 'SUGA', 'HOPE', 'JIMIN', 'V', 'JK'];
 
 const vibrate = () => { navigator.vibrate?.(15); playSfx('tap'); };
 
+// GA4 event tracking utility
+const trackEvent = (eventName: string, params?: Record<string, string | number>) => {
+  try { (window as any).gtag?.('event', eventName, params); } catch { /* no-op */ }
+};
+
 // ─── Home Screen ───────────────────────────────────────────────────
 // ─── 홈 화면 컴포넌트 ─────────────────────────────────────────────
 // 앱을 처음 열었을 때 보이는 메인 화면으로, 현재 시즌/시계 이벤트 정보,
@@ -75,6 +80,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     if (!consumed) { onShowHearts(); return; }
     // Heart break + zoom transition
     setTransitioning(true);
+    trackEvent('game_start', { user_id: currentUser?.id || 'guest' });
     timerRef.current = setTimeout(() => { setView('GAME'); setTransitioning(false); }, 900);
   };
 
@@ -206,6 +212,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
             vibrate();
             try {
               await login();
+              trackEvent('login', { method: 'google' });
               setShowLoginModal(false);
             } finally {
               setIsLoggingIn(false);
@@ -494,6 +501,7 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
         zIndex: 50
       });
       playSfx('win');
+      trackEvent('game_complete', { time_ms: elapsed, rank, is_new_best: 'true' });
     } else {
       confetti({
         particleCount: 40,
@@ -502,6 +510,7 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
         colors: ['#FFFFFF', '#FF0080'],
         zIndex: 50
       });
+      trackEvent('game_complete', { time_ms: elapsed, rank, is_new_best: 'false' });
     }
   }, [elapsed, currentUser?.gameHistory]);
 
@@ -574,7 +583,7 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
       // Appeal / Event Text
       ctx.fillStyle = '#00FFFF'; // Neon Cyan
       ctx.font = 'bold 56px Inter, sans-serif';
-      ctx.fillText("🔍 Search 'STANBEAT' on Google", 540, 1300);
+      ctx.fillText("🔍 Visit stanbeat.org", 540, 1300);
 
       ctx.fillStyle = '#FF0080'; // Neon Pink
       ctx.font = 'bold 48px Inter, sans-serif';
@@ -617,6 +626,7 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
         const shareData = { title: 'StanBeat Result', text: `I got ${titleText} in ${formatTime(elapsed)}! Can you beat me?`, url: getReferralLink(), files: [file] };
         if (navigator.canShare(shareData)) {
           await navigator.share(shareData);
+          trackEvent('share', { method: 'native', time_ms: elapsed });
           return;
         }
       }
@@ -632,7 +642,7 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
       const errorName = e instanceof Error ? e.name : '';
       const errorMessage = e instanceof Error ? e.message : String(e);
       if (errorName !== 'AbortError') {
-        alert('Failed to share: ' + errorMessage);
+        console.warn('Share failed:', errorMessage);
         try {
           if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
@@ -1653,8 +1663,9 @@ export default function App() {
       </Modal>
 
       {(currentView === 'HOME' || currentView === 'LEADERBOARD') && (
-        <footer className="bg-[#050208] p-4 text-center border-t border-white/10">
+        <footer className="bg-[#050208] p-4 text-center border-t border-white/10 space-y-1">
           <p className="text-[10px] text-[#4d4d4d] leading-tight">{t(language, 'legal')}</p>
+          <p className="text-[9px] text-[#3a3a3a]">© {new Date().getFullYear()} StanBeat · <a href="mailto:marketing@stanbeat.org" className="underline hover:text-white/40">marketing@stanbeat.org</a></p>
         </footer>
       )}
     </Layout>
