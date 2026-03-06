@@ -426,8 +426,19 @@ export const useStore = create<AppState>((set, get) => ({
         const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
 
         // 403 disallowed_useragent 에러 (보통 인앱 브라우저 등에서 구글이 차단할 때 발생)
-        if (message.includes('disallowed_useragent') || code === 'auth/unauthorized-domain' || message.includes('403') || message.includes('OAuth')) {
+        // UA-based in-app browser detection (more reliable than error message parsing)
+        const ua = navigator.userAgent || '';
+        const isInAppBrowser = /FBAN|FBAV|Instagram|KAKAOTALK|NAVER|Line\/|Twitter|Snapchat|TikTok|Daum|SamsungBrowser\/.*CrossApp/i.test(ua);
+
+        if (message.includes('disallowed_useragent') || isInAppBrowser) {
           set({ showBrowserBlocker: true });
+        } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+          // User cancelled login — do nothing
+          console.log('[Auth] Login cancelled by user.');
+        } else if (code === 'auth/unauthorized-domain') {
+          // Domain not authorized in Firebase Console
+          console.error('[Auth] This domain is not authorized in Firebase. Add it at: Firebase Console > Authentication > Settings > Authorized domains');
+          alert('이 도메인에서는 로그인할 수 없습니다. 관리자에게 문의하세요.\nLogin not available on this domain. Please contact admin.');
         } else {
           alert('구글 로그인에 실패했습니다. 다시 시도해주세요.\nGoogle login failed. Please try again.');
         }
@@ -789,8 +800,9 @@ export const useStore = create<AppState>((set, get) => ({
 
   getReferralLink: () => {
     const user = get().currentUser;
-    if (!user) return window.location.origin;
-    return `${window.location.origin}?ref=${user.referralCode}`;
+    const baseUrl = 'https://stanbeat.org';
+    if (!user) return baseUrl;
+    return `${baseUrl}?ref=${user.referralCode}`;
   },
 
   toggleAdminRole: () => {

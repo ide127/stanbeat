@@ -93,11 +93,23 @@
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="/icons/icon-512.svg" />
 
+  <!-- Google Analytics (GA4) -->
+  <!-- Replace G-XXXXXXXXXX with your actual GA4 Measurement ID -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'G-XXXXXXXXXX', {
+      page_title: document.title,
+      send_page_view: true
+    });
+  </script>
+
   <!-- Fonts -->
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Oswald:wght@500;700&family=Noto+Sans+Thai:wght@400;600;700&display=swap"
     rel="stylesheet">
-
   <!-- Tailwind CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
 
