@@ -1,7 +1,7 @@
 {
   "name": "functions",
   "version": "1.0.0",
-  "description": "StanBeat Adscend Media Postback Handler",
+  "description": "StanBeat AppLixir reward callbacks and gameplay functions",
   "main": "lib/index.js",
   "scripts": {
     "build": "tsc",

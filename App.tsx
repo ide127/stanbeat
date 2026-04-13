@@ -1,28 +1,101 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Clipboard, ClipboardCheck, DollarSign, Play, RefreshCw, Settings, Share2, ShieldAlert, Trash2, ToggleLeft, ToggleRight, Users, Video } from 'lucide-react';
+import { ArrowLeft, DollarSign, Play, RefreshCw, Settings, Share2, ShieldAlert, Trash2, ToggleLeft, ToggleRight, Users, Video } from 'lucide-react';
 import { Layout, Modal } from './components/Layout';
 import { languageOptions, t } from './i18n';
-import { useStore, detectLanguageFromIP, type AdConfig } from './store';
-import { GridCell, WordConfig, HistoryEvent } from './types';
-import confetti from 'canvas-confetti';
-import { formatTime, generateGrid, getCountryFlag, getSolutionCells, playSfx } from './utils';
-import { getCurrentSeasonNumber, generateGuestShowcase } from './league';
-
-const TARGET_WORDS = ['RM', 'JIN', 'SUGA', 'HOPE', 'JIMIN', 'V', 'JK'];
+import { useStore, detectLanguageFromIP, isRewardedVideoWaitActive, type AdConfig } from './store';
+import { AdminUserRow, DeferredInstallPrompt, GridCell, WordConfig, HistoryEvent } from './types';
+import { formatTime, generateAvatarUrl, generateGrid, getCountryFlag, getSolutionCells, playSfx } from './utils';
+import { getCurrentSeasonNumber, generateGuestShowcase, getLeagueFocus, getMsUntilNextUtcMidnight, getProjectedRankForTime } from './league';
+import { listenForApplixirRewards } from './services/rewards/applixirRewards';
+import { onAuthStateChanged } from './firebase';
+import { runtimeConfig } from './runtimeConfig';
+import { trackEvent } from './services/analytics';
+import { fandomPacks, getFandomPack } from './features/fandom';
 
 const vibrate = () => { navigator.vibrate?.(15); playSfx('tap'); };
 
-// GA4 event tracking utility
-const trackEvent = (eventName: string, params?: Record<string, string | number>) => {
-  try { (window as any).gtag?.('event', eventName, params); } catch { /* no-op */ }
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to manual copy fallback.
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
 };
 
-// ─── Home Screen ───────────────────────────────────────────────────
+const launchConfetti = async (options: Record<string, unknown>) => {
+  const module = await import('canvas-confetti');
+  module.default(options);
+};
+
+const requestGameStart = async (onNoHearts?: () => void) => {
+  const result = await useStore.getState().startGame();
+  if (result === 'needs_hearts') {
+    onNoHearts?.();
+  }
+  return result;
+};
+
+const resolveAdminUpdatedAt = (value: AdminUserRow['updatedAt']): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'object') {
+    if ('toDate' in value && typeof value.toDate === 'function') {
+      return value.toDate();
+    }
+    if ('toMillis' in value && typeof value.toMillis === 'function') {
+      return new Date(value.toMillis());
+    }
+  }
+
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
 // ─── 홈 화면 컴포넌트 ─────────────────────────────────────────────
 // 앱을 처음 열었을 때 보이는 메인 화면으로, 현재 시즌/시계 이벤트 정보,
 // 게임 시작 버튼, 그리고 광고/오퍼월을 통해 하트를 얻을 수 있는 UI를 제공합니다.
 const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
-  const { setView, consumeHeart, currentUser, login, language, termsAccepted, acceptTerms, seasonEndsAt, notice, showNoticePopup, setShowNoticePopup } = useStore();
+  const {
+    setView,
+    currentUser,
+    login,
+    language,
+    termsAccepted,
+    acceptTerms,
+    seasonEndsAt,
+    notice,
+    showNoticePopup,
+    league,
+    fetchLeaderboard,
+    getLeagueCountdown,
+    loginPromptRequested,
+    termsPromptRequested,
+    clearActionPrompts,
+    activeFandomId,
+    setActiveFandom,
+  } = useStore();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [termsChecked, setTermsChecked] = useState(true);
@@ -31,6 +104,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const [transitioning, setTransitioning] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [remainingParts, setRemainingParts] = useState({ h: 0, m: 0, s: 0, ms: 0 });
+  const [leagueCountdown, setLeagueCountdown] = useState('10:00');
 
   // Show notice popup on mount if enabled
   useEffect(() => {
@@ -44,6 +118,20 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
       setTermsChecked(true);
     }
   }, [showTermsModal]);
+
+  useEffect(() => {
+    if (loginPromptRequested) {
+      setShowLoginModal(true);
+      clearActionPrompts();
+    }
+  }, [clearActionPrompts, loginPromptRequested]);
+
+  useEffect(() => {
+    if (termsPromptRequested) {
+      setShowTermsModal(true);
+      clearActionPrompts();
+    }
+  }, [clearActionPrompts, termsPromptRequested]);
 
   useEffect(() => {
     const interval = setInterval(() => setRewardIndex((prev) => (prev + 1) % 3), 1800);
@@ -72,12 +160,49 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, []);
 
-  const handlePlay = () => {
+  useEffect(() => {
+    if (currentUser && !league) {
+      void fetchLeaderboard();
+    }
+  }, [currentUser, league, fetchLeaderboard]);
+
+  useEffect(() => {
+    if (!league) {
+      setLeagueCountdown('10:00');
+      return;
+    }
+
+    const updateCountdown = () => {
+      setLeagueCountdown(getLeagueCountdown());
+    };
+
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(timer);
+  }, [league, getLeagueCountdown]);
+
+  const leagueEntry = league?.entries.find((entry) => entry.isCurrentUser);
+  const leagueFocus = league ? getLeagueFocus(league) : null;
+  const leagueFocusText = (() => {
+    if (!leagueFocus) return null;
+    if (leagueFocus.mode === 'defend') {
+      return t(language, 'leagueFocusDefend', { gap: formatTime(leagueFocus.gapMs) });
+    }
+    if (leagueFocus.mode === 'summit') {
+      return t(language, 'leagueFocusFirst', { gap: formatTime(leagueFocus.gapMs) });
+    }
+    return t(language, 'leagueFocusRival', {
+      name: leagueFocus.rivalName ?? t(language, 'unknownUser'),
+      rank: String(leagueFocus.targetRank),
+      gap: formatTime(leagueFocus.gapMs),
+    });
+  })();
+
+  const handlePlay = async () => {
+    if (transitioning) return;
     vibrate();
-    if (!currentUser) { setShowLoginModal(true); return; }
-    if (!termsAccepted) { setShowTermsModal(true); return; }
-    const consumed = consumeHeart();
-    if (!consumed) { onShowHearts(); return; }
+    const result = await requestGameStart(onShowHearts);
+    if (result !== 'started') return;
     // Heart break + zoom transition
     setTransitioning(true);
     trackEvent('game_start', { user_id: currentUser?.id || 'guest' });
@@ -94,65 +219,231 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const TOTAL_TESTIMONIALS = 32;
   const SHOWN_TESTIMONIALS = 5;
   const testimonials = [
-    { name: 'ShinyCookie_42', flag: '🇺🇸', text: t(language, 'testimonial1'), avatar: 'https://api.dicebear.com/9.x/lorelei/svg?seed=ShinyCookie42&backgroundColor=b6e3f4' },
-    { name: 'LovelyHobi_77', flag: '🇧🇷', text: t(language, 'testimonial2'), avatar: 'https://api.dicebear.com/9.x/lorelei/svg?seed=LovelyHobi77&backgroundColor=ffd5dc' },
-    { name: 'NeonJimin_03', flag: '🇵🇭', text: t(language, 'testimonial3'), avatar: 'https://api.dicebear.com/9.x/lorelei/svg?seed=NeonJimin03&backgroundColor=c0aede' },
-    { name: 'BrightARMY_91', flag: '🇲🇽', text: t(language, 'testimonial4'), avatar: 'https://api.dicebear.com/9.x/lorelei/svg?seed=BrightArmy91&backgroundColor=d1d4f9' },
-    { name: 'DrYoongi_500', flag: '🇯🇵', text: t(language, 'testimonial5'), avatar: 'https://api.dicebear.com/9.x/lorelei/svg?seed=DrYoongi500&backgroundColor=ffdfbf' },
+    { name: 'ShinyCookie_42', country: 'US', text: t(language, 'testimonial1'), avatar: generateAvatarUrl('testimonial-1', 'ShinyCookie_42') },
+    { name: 'LovelyHobi_77', country: 'BR', text: t(language, 'testimonial2'), avatar: generateAvatarUrl('testimonial-2', 'LovelyHobi_77') },
+    { name: 'NeonJimin_03', country: 'PH', text: t(language, 'testimonial3'), avatar: generateAvatarUrl('testimonial-3', 'NeonJimin_03') },
+    { name: 'BrightARMY_91', country: 'MX', text: t(language, 'testimonial4'), avatar: generateAvatarUrl('testimonial-4', 'BrightARMY_91') },
+    { name: 'DrYoongi_500', country: 'JP', text: t(language, 'testimonial5'), avatar: generateAvatarUrl('testimonial-5', 'DrYoongi_500') },
   ];
   const [testimonialIdx, setTestimonialIdx] = useState(0);
+  const activeTestimonial = testimonials[testimonialIdx];
+  const fandomCarouselRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const fandomCarouselSlowRef = useRef(false);
   useEffect(() => {
     const timer = setInterval(() => setTestimonialIdx((i) => (i + 1) % SHOWN_TESTIMONIALS), 5000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let releaseTimer: number | null = null;
+    const slowDown = () => {
+      if (releaseTimer !== null) window.clearTimeout(releaseTimer);
+      document.body.classList.add('fandom-touch-slow');
+    };
+    const restore = () => {
+      if (releaseTimer !== null) window.clearTimeout(releaseTimer);
+      releaseTimer = window.setTimeout(() => {
+        document.body.classList.remove('fandom-touch-slow');
+        releaseTimer = null;
+      }, 220);
+    };
+
+    window.addEventListener('pointerdown', slowDown, { passive: true });
+    window.addEventListener('pointerup', restore, { passive: true });
+    window.addEventListener('pointercancel', restore, { passive: true });
+    window.addEventListener('blur', restore);
+
+    return () => {
+      if (releaseTimer !== null) window.clearTimeout(releaseTimer);
+      document.body.classList.remove('fandom-touch-slow');
+      window.removeEventListener('pointerdown', slowDown);
+      window.removeEventListener('pointerup', restore);
+      window.removeEventListener('pointercancel', restore);
+      window.removeEventListener('blur', restore);
+    };
+  }, []);
+
+  useEffect(() => {
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) return;
+
+    const positions = [0, 0];
+    const baseSpeeds = [38, 34];
+    let lastFrame = performance.now();
+    let frameId = 0;
+
+    const update = (now: number) => {
+      const deltaSeconds = Math.min(0.05, (now - lastFrame) / 1000);
+      lastFrame = now;
+      const slowFactor = fandomCarouselSlowRef.current || document.body.classList.contains('fandom-touch-slow') ? 0.14 : 1;
+
+      fandomCarouselRefs.current.forEach((rowElement, index) => {
+        if (!rowElement) return;
+        const loopWidth = rowElement.scrollWidth / 2;
+        if (loopWidth <= 0) return;
+        positions[index] = (positions[index] + baseSpeeds[index] * slowFactor * deltaSeconds) % loopWidth;
+        rowElement.style.transform = `translate3d(${positions[index] - loopWidth}px, 0, 0)`;
+      });
+
+      frameId = window.requestAnimationFrame(update);
+    };
+
+    frameId = window.requestAnimationFrame(update);
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
+
   const seasonNum = getCurrentSeasonNumber();
+  const legalText = t(language, 'legal').replace(/^\*\s*/, '');
+  const activeFandom = getFandomPack(activeFandomId);
+  const fandomRows = [
+    fandomPacks.filter((_, index) => index % 2 === 0),
+    fandomPacks.filter((_, index) => index % 2 === 1),
+  ];
 
   return (
-    <div className={`flex-1 flex flex-col p-6 text-center ${transitioning ? 'zoom-in' : ''}`}>
+    <div className={`flex-1 flex flex-col px-4 pb-5 pt-3 text-center ${transitioning ? 'zoom-in' : ''}`}>
       {transitioning && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60">
           <span className="text-6xl heart-break">💔</span>
         </div>
       )}
 
-      <h1 className="text-4xl text-white font-black tracking-tight mt-4 glitch">{t(language, 'homeTitle')}</h1>
+      <h1 className="text-[2rem] leading-[0.95] text-white font-black tracking-tight glitch">
+        {t(language, 'homeTitleFandom', { fandom: activeFandom.targetLabel })}
+      </h1>
 
-      <div className="mt-4 rounded-2xl overflow-hidden border border-white/10 relative h-48">
-        <img src="/images/hero-concert.webp" alt="Concert Crowd" className="w-full h-full object-cover opacity-85" />
+      <div className="mt-3 rounded-2xl overflow-hidden border border-white/10 relative h-40">
+        <img src={activeFandom.heroImage} alt={activeFandom.displayName} className="w-full h-full object-cover opacity-85" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-        <p className="absolute left-3 bottom-3 text-[#00FFFF] text-xs font-bold uppercase">{t(language, 'homeTarget')}</p>
+        <h2 className="absolute left-3 bottom-3 text-[#8CF8FF] text-sm font-black uppercase tracking-[0.18em]">
+          {t(language, 'homeTargetFandom', { target: activeFandom.targetLabel })}
+        </h2>
+        <span aria-hidden="true" className="absolute right-3 bottom-3 rounded-full bg-black/60 px-2 py-1 text-[10px] font-bold text-white/80">
+          {activeFandom.fandomName}
+        </span>
       </div>
 
-      {/* Prize urgency banner */}
-      <div className="mt-4 rounded-xl border border-[#FFD700]/40 bg-gradient-to-r from-[#FFD700]/10 via-[#FF6B00]/10 to-[#FF0080]/10 p-3 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-[shimmer_3s_linear_infinite]" />
-        <p className="text-[#FFD700] font-black text-base tracking-wide">{t(language, 'prizeOverallBanner')}</p>
-        <p className="text-white/60 text-[11px] mt-0.5">{t(language, 'prizeLeagueBanner')}</p>
-      </div>
-
-      <div className="mt-4">
-        <p className="text-white/60 text-xs uppercase tracking-widest">{t(language, 'seasonLabel', { seasonNum: String(seasonNum) })}</p>
-        <div className="flex items-end justify-center gap-1 mt-1">
-          {remainingParts.h > 0 && <><span className="text-red-400 text-3xl font-black font-mono">{remainingParts.h}</span><span className="text-white/50 text-lg mb-1">{t(language, 'hoursUnit')}</span></>}
-          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.m).padStart(2, '0')}</span><span className="text-white/50 text-lg mb-1">{t(language, 'minutesUnit')}</span>
-          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.s).padStart(2, '0')}</span>
-          <span className="text-red-400 text-xl font-black font-mono">.{String(remainingParts.ms).padStart(2, '0')}</span>
-          <span className="text-white/50 text-lg mb-1">{t(language, 'secondsUnit')}</span>
-        </div>
-      </div>
-
-      <p className="text-white/70 text-sm mt-4">
-        {t(language, 'description')}
-        <span className="text-[10px] text-white/40 align-top ml-1">{t(language, 'termsApply')}</span>
-      </p>
-
-      <button onClick={handlePlay} className="w-full mt-5 relative overflow-hidden bg-[#FF0080] text-white font-black text-2xl py-5 rounded-2xl btn-squishy pulse-ring">
+      <button onClick={() => { void handlePlay(); }} className="sticky bottom-3 z-30 w-full mt-3 relative overflow-hidden bg-[#FF0080] text-white font-black text-xl py-4 rounded-2xl btn-squishy pulse-ring shadow-[0_10px_30px_rgba(255,0,128,0.35)]">
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-[shimmer_2s_linear_infinite]" />
         <div className="relative flex items-center justify-center gap-3">
           <Play fill="white" />
           <span>{t(language, 'playNow')}</span>
         </div>
       </button>
+
+      <section className="mt-3 rounded-xl border border-white/15 bg-black/35 p-3 text-left">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-white text-sm font-black">{t(language, 'fandomChooserTitle')}</h2>
+          <span className="rounded-full px-2 py-1 text-[10px] font-black text-black" style={{ backgroundColor: activeFandom.accent }}>
+            {activeFandom.displayName}
+          </span>
+        </div>
+        <p className="text-white/65 text-[11px] mt-1">{t(language, 'fandomChooserSubtitle')}</p>
+        <p className="mt-2 text-[10px] text-white/60">{t(language, 'fandomScrollHint', { count: String(fandomPacks.length) })}</p>
+        <div
+          className="fandom-carousel relative mt-3 overflow-hidden rounded-xl py-1"
+          aria-label={t(language, 'fandomChooserTitle')}
+          onPointerEnter={() => { fandomCarouselSlowRef.current = true; }}
+          onPointerLeave={() => { fandomCarouselSlowRef.current = false; }}
+          onFocus={() => { fandomCarouselSlowRef.current = true; }}
+          onBlur={() => { fandomCarouselSlowRef.current = false; }}
+        >
+          {fandomRows.map((row, rowIndex) => (
+            <div
+              key={rowIndex}
+              className="overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none]"
+              style={{ touchAction: 'pan-x' }}
+            >
+              <div
+                ref={(element) => { fandomCarouselRefs.current[rowIndex] = element; }}
+                className={`fandom-carousel-row flex w-max gap-2 py-1 will-change-transform ${rowIndex === 0 ? 'fandom-carousel-row-left pr-2' : 'fandom-carousel-row-right pl-10'}`}
+              >
+                {[...row, ...row].map((pack, index) => {
+                  const isClone = rowIndex === 0 ? index >= row.length : index < row.length;
+                  const isSelected = activeFandomId === pack.id;
+                  return (
+                  <button
+                    key={`${pack.id}-${rowIndex}-${index}`}
+                    type="button"
+                    aria-hidden={isClone ? 'true' : undefined}
+                    tabIndex={isClone ? -1 : 0}
+                    aria-pressed={!isClone ? isSelected : undefined}
+                    onClick={() => { vibrate(); setActiveFandom(pack.id); }}
+                    className={`min-w-[132px] rounded-full px-3 py-2 text-left btn-squishy transition-all ${isSelected ? 'text-black' : 'text-white hover:bg-white/10'}`}
+                    style={{
+                      background: isSelected
+                        ? `linear-gradient(135deg, ${pack.accent}, #ffffff)`
+                        : `linear-gradient(135deg, ${pack.accent}24, rgba(255,255,255,0.05))`,
+                      boxShadow: isSelected
+                        ? `0 0 0 2px ${pack.accent}, 0 0 18px ${pack.accent}80`
+                        : `inset 0 0 0 1px ${pack.accent}70`,
+                    }}
+                  >
+                    <span className="flex items-center justify-between gap-2 text-xs font-black">
+                      <span>{pack.displayName}</span>
+                      {isSelected && <span aria-hidden="true">✓</span>}
+                    </span>
+                    <span className={`block text-[10px] ${isSelected ? 'text-black/65' : 'text-white/75'}`}>{pack.fandomName}</span>
+                  </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-[#12081c] via-[#12081c]/80 to-transparent" />
+          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[#12081c] via-[#12081c]/80 to-transparent" />
+        </div>
+        <p className="mt-2 text-[10px] leading-relaxed text-white/60">{t(language, 'fandomDisclaimer')}</p>
+      </section>
+
+      {/* Prize urgency banner */}
+      <section className="mt-4 rounded-xl border border-[#FFD700]/40 bg-gradient-to-r from-[#FFD700]/10 via-[#FF6B00]/10 to-[#FF0080]/10 p-3 relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-[shimmer_3s_linear_infinite]" />
+        <h2 className="text-[#FFE082] font-black text-base tracking-wide">{t(language, 'prizeOverallBanner')}</h2>
+        <p className="text-white/90 text-sm mt-0.5">{t(language, 'prizeLeagueBanner')}</p>
+      </section>
+
+      <div className="mt-3">
+        <p className="text-white/60 text-xs uppercase tracking-widest">{t(language, 'seasonLabel', { seasonNum: String(seasonNum) })}</p>
+        <h2 className="flex items-end justify-center gap-1 mt-1">
+          {remainingParts.h > 0 && <><span className="text-red-400 text-3xl font-black font-mono">{remainingParts.h}</span><span className="text-white/50 text-lg mb-1">{t(language, 'hoursUnit')}</span></>}
+          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.m).padStart(2, '0')}</span><span className="text-white/50 text-lg mb-1">{t(language, 'minutesUnit')}</span>
+          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.s).padStart(2, '0')}</span>
+          <span className="text-red-400 text-xl font-black font-mono">.{String(remainingParts.ms).padStart(2, '0')}</span>
+          <span className="text-white/50 text-lg mb-1">{t(language, 'secondsUnit')}</span>
+        </h2>
+      </div>
+
+      {currentUser && league && (
+        <div className="mt-4 rounded-xl border border-[#00FFFF]/20 bg-gradient-to-br from-[#00FFFF]/10 via-[#1A0B2E] to-[#FF0080]/10 p-4 text-left">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[#00FFFF] text-[11px] font-black tracking-[0.2em]">{t(language, 'homeLeagueTitle')}</p>
+            <p className="text-white/45 text-[10px]">{t(language, 'nextSync', { time: leagueCountdown })}</p>
+          </div>
+          <p className="text-white text-lg font-black mt-2">{league.displayName}</p>
+          <p className="text-white/55 text-[11px] mt-1">
+            {t(language, 'homeLeagueMeta', { players: String(league.leagueSize), totalLeagues: String(league.totalLeagues) })}
+          </p>
+          <div className="mt-3 rounded-lg bg-black/25 border border-white/10 p-3 space-y-2">
+            <p className="text-white text-sm font-semibold">
+              {leagueEntry
+                ? t(language, 'homeLeagueStanding', { rank: String(leagueEntry.rank), time: formatTime(currentUser.bestTime ?? leagueEntry.time) })
+                : t(language, 'homeLeaguePreview', { league: league.displayName })}
+            </p>
+            {leagueFocusText && (
+              <p className="text-[#00FFFF] text-xs font-semibold">{leagueFocusText}</p>
+            )}
+            {!leagueEntry && (
+              <p className="text-white/50 text-[11px]">{t(language, 'noRecordYet')}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <p className="text-white/80 text-sm mt-3">
+        {t(language, 'description')}
+        <span className="text-xs text-white/65 align-top ml-1">{t(language, 'termsApply')}</span>
+      </p>
 
       {useStore.getState().deferredPrompt && (
         <button onClick={() => {
@@ -161,38 +452,44 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
           promptEvent.prompt();
           promptEvent.userChoice.then(() => useStore.setState({ deferredPrompt: null }));
         }} className="w-full mt-3 bg-[#00FFFF]/20 border border-[#00FFFF]/50 text-[#00FFFF] font-bold py-3 rounded-xl btn-squishy flex items-center justify-center gap-2">
-          📱 Install App for Best Experience
+          {t(language, 'installAppCta')}
         </button>
       )}
 
       <div className="mt-4 rounded-xl overflow-hidden border border-white/10 bg-black/30">
-        <img src={rewardImages[rewardIndex]} alt="reward" className="w-full h-24 object-cover" />
+        <img src={rewardImages[rewardIndex]} alt={t(language, 'rewardText')} className="w-full h-24 object-cover" />
         <p className="text-white/80 text-xs py-2">{t(language, 'rewardText')}</p>
       </div>
 
       {/* Winner Testimonials (30+ accumulated, showing 5) */}
       <div className="mt-4 rounded-xl border border-[#FF0080]/30 bg-gradient-to-br from-[#FF0080]/10 to-[#1A0B2E] p-4">
         <h3 className="text-white font-bold text-sm mb-1">{t(language, 'winnersTitle')}</h3>
-        <p className="text-white/40 text-[10px] mb-3">{t(language, 'winnersSubtitle', { total: String(TOTAL_TESTIMONIALS), shown: String(SHOWN_TESTIMONIALS) })}</p>
-        <div className="relative overflow-hidden" style={{ minHeight: '80px' }}>
-          {testimonials.map((item, idx) => (
-            <div
-              key={idx}
-              className={`flex items-start gap-3 transition-all duration-500 ${idx === testimonialIdx ? 'opacity-100 translate-y-0' : 'opacity-0 absolute inset-0 translate-y-4'}`}
-            >
-              <div className="w-10 h-10 rounded-full border border-[#00FFFF]/50 flex-shrink-0 bg-white/10 overflow-hidden">
-                <img src={item.avatar} alt={item.name} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.innerHTML = '<div class="w-full h-full flex items-center justify-center text-xs">👤</div>'; }} />
-              </div>
-              <div className="flex-1 text-left">
-                <p className="text-white/80 text-xs italic">"{item.text}"</p>
-                <div className="flex items-center gap-1 mt-1">
-                  <span className="text-[#00FFFF] text-[10px] font-semibold">— {item.name}</span>
-                  <span>{item.flag}</span>
-                  <span className="text-yellow-400 text-[10px]">★★★★★</span>
-                </div>
+        <p className="text-white/70 text-xs mb-3">{t(language, 'winnersSubtitle', { total: String(TOTAL_TESTIMONIALS), shown: String(SHOWN_TESTIMONIALS) })}</p>
+        <div className="relative overflow-hidden min-h-[96px]">
+          <div
+            key={testimonialIdx}
+            className="flex items-start gap-3 rounded-xl border border-white/20 bg-[#14091F] p-3 animate-[fadeIn_0.35s_ease-out]"
+          >
+            <div className="w-10 h-10 rounded-full border border-[#00FFFF]/50 flex-shrink-0 bg-white/10 overflow-hidden">
+              <img
+                src={activeTestimonial.avatar}
+                alt={activeTestimonial.name}
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  e.currentTarget.parentElement!.innerHTML = `<div class="w-full h-full flex items-center justify-center text-xs font-bold">${activeTestimonial.name.charAt(0).toUpperCase()}</div>`;
+                }}
+              />
+            </div>
+            <div className="flex-1 text-left">
+              <p className="text-white text-base leading-relaxed italic">"{activeTestimonial.text}"</p>
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-white text-base font-bold">- {activeTestimonial.name}</span>
+                <span className="text-sm" aria-label={activeTestimonial.country}>{getCountryFlag(activeTestimonial.country)}</span>
+                <span className="text-[#FFE082] text-base">★★★★★</span>
               </div>
             </div>
-          ))}
+          </div>
         </div>
         <div className="flex justify-center gap-1 mt-2">
           {Array.from({ length: SHOWN_TESTIMONIALS }, (_, i) => (
@@ -211,16 +508,18 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
             setIsLoggingIn(true);
             vibrate();
             try {
-              await login();
-              trackEvent('login', { method: 'google' });
-              setShowLoginModal(false);
+              const success = await login();
+              if (success) {
+                trackEvent('login', { method: 'google' });
+                setShowLoginModal(false);
+              }
             } finally {
               setIsLoggingIn(false);
             }
           }}
           className="w-full bg-white text-black font-bold py-3 rounded-xl btn-squishy disabled:opacity-50 flex justify-center items-center gap-2"
         >
-          {isLoggingIn ? <span className="animate-spin text-xl">↻</span> : null}
+          {isLoggingIn ? <RefreshCw size={18} className="animate-spin" /> : null}
           {t(language, 'continueGoogle')}
         </button>
       </Modal>
@@ -277,46 +576,117 @@ const TimerDisplay = ({ startMs, won, setElapsedState }: { startMs: number; won:
 // 실제 워드서치 게임 플레이 화면. 타이머가 작동하며,
 // 사용자가 그리드에서 단어를 드래그하여 찾는 로직이 포함되어 있습니다.
 const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
-  const { setView, updateBestTime, addHistoryEvent, language, editUserHeart, currentUser } = useStore();
+  const { setView, recordCompletedPlay, addHistoryEvent, language, editUserHeart, currentUser, setGameFinished, gameExitRequested, clearGameExitRequest, showAlertDialog, activeFandomId } = useStore();
   const [grid, setGrid] = useState<GridCell[]>([]);
   const [words, setWords] = useState<WordConfig[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [startId, setStartId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [won, setWon] = useState(false);
+  const [completionSyncPending, setCompletionSyncPending] = useState(false);
   const startMsRef = useRef(Date.now());
   const placementRef = useRef<{ word: string; row: number; col: number; dir: { r: number; c: number } }[]>([]);
   const [showDevPanel, setShowDevPanel] = useState(false);
   const [heartDelta, setHeartDelta] = useState(1);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const exitIntentRef = useRef(false);
+  const completionCommittedRef = useRef(false);
+  const getRunElapsed = () => Math.max(0, Date.now() - startMsRef.current);
 
   const isAdmin = currentUser?.role === 'ADMIN';
+  const canUseGameDevTools = import.meta.env.DEV && isAdmin;
+  const activeFandom = getFandomPack(activeFandomId);
 
   useEffect(() => {
-    const { grid: generated, wordList, placement } = generateGrid(10, TARGET_WORDS);
+    const { grid: generated, wordList, placement } = generateGrid(10, [...activeFandom.words]);
     setGrid(generated);
     setWords(wordList);
     placementRef.current = placement;
-  }, []);
+    setGameFinished(false);
+    completionCommittedRef.current = false;
+  }, [activeFandom.words, setGameFinished]);
 
   useEffect(() => {
-    if (words.length > 0 && words.every((word) => word.found)) {
-      setWon(true);
-      updateBestTime(elapsed);
-      addHistoryEvent('PLAY', elapsed);
+    if (won || completionSyncPending) return;
+    const updateElapsed = () => setElapsed(Date.now() - startMsRef.current);
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 10);
+    return () => window.clearInterval(timer);
+  }, [completionSyncPending, won]);
+
+  useEffect(() => {
+    if (!canUseGameDevTools && showDevPanel) {
+      setShowDevPanel(false);
     }
-  }, [won, elapsed, updateBestTime, addHistoryEvent, words]);
+  }, [canUseGameDevTools, showDevPanel]);
+
+  useEffect(() => {
+    if (won || completionSyncPending || completionCommittedRef.current || words.length === 0 || !words.every((word) => word.found)) return;
+
+    const commitCompletion = async () => {
+      const finalElapsed = getRunElapsed();
+      completionCommittedRef.current = true;
+      setElapsed(finalElapsed);
+      setGameFinished(true);
+      setCompletionSyncPending(true);
+      const saved = await recordCompletedPlay(finalElapsed);
+      setCompletionSyncPending(false);
+      if (!saved) {
+        completionCommittedRef.current = false;
+        setGameFinished(false);
+        return;
+      }
+      setWon(true);
+    };
+
+    void commitCompletion();
+  }, [completionSyncPending, won, recordCompletedPlay, words, setGameFinished]);
 
   // Tab Visibility Anti-Cheat
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.hidden && !won) {
-        alert(language === 'ko' ? '게임 중 다른 화면으로 이동하여 게임이 취소되었습니다.' : 'Game cancelled because you switched tabs.');
+      if (document.hidden && !won && !completionSyncPending && !exitIntentRef.current) {
+        addHistoryEvent('CANCELLED', getRunElapsed());
+        showAlertDialog({
+          title: t(language, 'browserNotSupported'),
+          message: t(language, 'gameCancelledTabSwitch'),
+          tone: 'warning',
+        });
         setView('HOME');
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [won, language, setView]);
+  }, [completionSyncPending, won, language, setView, addHistoryEvent, showAlertDialog]);
+
+  // Listen for exit requests from Layout header logo
+  useEffect(() => {
+    if (gameExitRequested && !won && !completionSyncPending) {
+      clearGameExitRequest();
+      handleExitGame();
+    } else if (gameExitRequested) {
+      clearGameExitRequest();
+    }
+  }, [clearGameExitRequest, completionSyncPending, gameExitRequested, won]);
+
+  const handleExitGame = () => {
+    exitIntentRef.current = true;
+    setShowExitConfirm(true);
+  };
+
+  const confirmExit = () => {
+    setShowExitConfirm(false);
+    vibrate();
+    if (!won) {
+      addHistoryEvent('CANCELLED', getRunElapsed());
+    }
+    setView('HOME');
+  };
+
+  const cancelExit = () => {
+    exitIntentRef.current = false;
+    setShowExitConfirm(false);
+  };
 
   const commitSelection = (ids: string[]) => {
     const text = ids.map((id) => grid.find((cell) => cell.id === id)?.letter ?? '').join('');
@@ -354,7 +724,7 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 
   // 유저가 터치(또는 클릭)한 상태로 화면 위를 드래그할 때(마우스를 이동하거나 손가락을 움직일 때) 계속 호출됨
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (!startId || won) return;
+    if (!startId || won || completionSyncPending) return;
     // prevent touch scrolling default action manually if touch-action CSS isn't enough
     const el = document.elementFromPoint(e.clientX, e.clientY);
     if (!el) return;
@@ -422,35 +792,32 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   if (won) return <ResultScreen elapsed={elapsed} onShowHearts={onShowHearts} grid={grid} words={words} />;
 
   return (
-    <div className="flex-1 p-4" onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} onPointerCancel={handlePointerUp}>
+    <>
+    <div className="flex-1 p-4 relative">
       <div className="flex items-center justify-between mb-4">
         <div className="bg-[#FF0080]/20 border border-[#FF0080] rounded-full px-3 py-1 text-[#FF0080] font-mono font-bold">{formatTime(elapsed)}</div>
         <div className="flex items-center gap-2">
-          {isAdmin && (
+          {canUseGameDevTools && (
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-[#FF0080] font-bold border border-[#FF0080] rounded px-2 py-0.5 bg-[#FF0080]/20">GOD MODE</span>
               <button onClick={() => setShowDevPanel((v) => !v)} className="text-[10px] text-yellow-400/70 border border-yellow-400/30 rounded px-2 py-0.5 btn-squishy">DEV</button>
             </div>
           )}
-          <button onClick={() => {
-            const exitMsg = language === 'ko' ? '게임 중 돌아가면 사용한 하트는 반환되지 않습니다.\n정말 나가시겠습니까?' : 'If you leave now, your heart will not be returned.\nAre you sure?';
-            if (!confirm(exitMsg)) return;
-            vibrate(); setView('HOME');
-          }} className="text-white/70 hover:text-white btn-squishy">{t(language, 'exitGame')}</button>
+          <button onClick={handleExitGame} className="text-white/70 hover:text-white btn-squishy">{t(language, 'exitGame')}</button>
         </div>
       </div>
 
       {/* Dev Tools Panel */}
-      {isAdmin && showDevPanel && (
+      {canUseGameDevTools && showDevPanel && (
         <div className="mb-3 p-3 rounded-xl border border-yellow-400/30 bg-yellow-400/5 space-y-2">
           <p className="text-yellow-400 text-[10px] font-bold uppercase tracking-widest">🛠 Dev Tools</p>
           <button onClick={handleDevSolve} className="w-full bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-xs rounded-lg py-1.5 btn-squishy font-bold">
             ⚡ Auto-Solve All Words
           </button>
           <div className="flex items-center gap-2">
-            <button onClick={() => { if (currentUser) editUserHeart(currentUser.id, -heartDelta); }} className="flex-1 bg-red-500/20 border border-red-500/30 text-red-300 text-xs rounded py-1 btn-squishy">−{heartDelta} 💔</button>
+            <button onClick={() => { if (currentUser) editUserHeart(currentUser.id, -heartDelta, 'DELTA'); }} className="flex-1 bg-red-500/20 border border-red-500/30 text-red-300 text-xs rounded py-1 btn-squishy">-{heartDelta} ❤️</button>
             <input type="number" min={1} max={99} value={heartDelta} onChange={(e) => setHeartDelta(Math.max(1, parseInt(e.target.value) || 1))} className="w-14 bg-black/40 border border-white/20 text-white text-xs rounded text-center py-1" />
-            <button onClick={() => { if (currentUser) editUserHeart(currentUser.id, heartDelta); }} className="flex-1 bg-green-500/20 border border-green-500/30 text-green-300 text-xs rounded py-1 btn-squishy">+{heartDelta} 💚</button>
+            <button onClick={() => { if (currentUser) editUserHeart(currentUser.id, heartDelta, 'DELTA'); }} className="flex-1 bg-green-500/20 border border-green-500/30 text-green-300 text-xs rounded py-1 btn-squishy">+{heartDelta} ❤️</button>
           </div>
         </div>
       )}
@@ -459,6 +826,9 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         className="grid grid-cols-10 gap-1 bg-black/40 p-2 rounded-xl border border-white/10 select-none touch-none"
         style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
         onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+        onPointerCancel={handlePointerUp}
       >
         {grid.map((cell) => {
           const selected = selectedIds.includes(cell.id);
@@ -483,7 +853,41 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
           </span>
         ))}
       </div>
+
+      {completionSyncPending && (
+        <div className="absolute inset-4 rounded-2xl bg-black/75 backdrop-blur-sm border border-[#00FFFF]/20 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <span className="inline-block w-10 h-10 border-4 border-[#00FFFF] border-t-transparent rounded-full animate-spin" />
+            <p className="text-white/80 text-sm font-semibold">{formatTime(elapsed)}</p>
+            <p className="text-white/55 text-xs">{t(language, 'save')}</p>
+          </div>
+        </div>
+      )}
     </div>
+
+      {/* Exit Confirmation Modal */}
+      {showExitConfirm && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={cancelExit} />
+          <div className="bg-[#1A0B2E] w-full max-w-xs rounded-2xl border border-[#FF0080]/40 shadow-[0_0_30px_rgba(255,0,128,0.4)] relative p-6 text-center">
+            <p className="text-white text-lg font-bold mb-2">
+              {t(language, 'leaveGameTitle')}
+            </p>
+            <p className="text-white/70 text-sm mb-6">
+              {t(language, 'leaveGameMessage')}
+            </p>
+            <div className="flex gap-3">
+              <button onClick={cancelExit} className="flex-1 bg-white/10 border border-white/20 text-white py-2.5 rounded-lg font-bold btn-squishy">
+                {t(language, 'cancelAction')}
+              </button>
+              <button onClick={confirmExit} className="flex-1 bg-[#FF0080] text-white py-2.5 rounded-lg font-bold btn-squishy">
+                {t(language, 'leaveAction')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
@@ -491,25 +895,40 @@ const GameScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 // 게임 클리어 후 표시되는 화면으로, 소요 시간과 현재 리그에서의 예상 등수,
 // 그리고 완성된 워드서치 그리드 및 친구 초대(공유) 링크 표시 기능을 합니다.
 const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number; onShowHearts: () => void; grid: GridCell[]; words: WordConfig[]; }) => {
-  const { setView, leaderboard, currentUser, language, getReferralLink, consumeHeart, login } = useStore();
+  const { setView, leaderboard, currentUser, language, getReferralLink, league, showRewardToast, activeFandomId } = useStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [cardGenerated, setCardGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
+  const celebrationTriggeredRef = useRef(false);
 
   const visibleLeaderboard = leaderboard.filter((entry) => !entry.banned);
   const myEntry = visibleLeaderboard.find((e) => e.isCurrentUser);
-  const rank = myEntry?.rank ?? (visibleLeaderboard.filter((e) => e.time < elapsed).length + 1);
+  const playHistory = currentUser?.gameHistory?.filter((h) => h.type === 'PLAY') || [];
+  const historicalBest = playHistory.length > 1 ? Math.min(...playHistory.slice(0, -1).map((h) => h.value)) : Infinity;
+  const isNewBest = playHistory.length === 1 || elapsed < historicalBest;
+  const rank = myEntry?.rank ?? (league ? getProjectedRankForTime(league, elapsed) : (visibleLeaderboard.filter((e) => e.time < elapsed).length + 1));
   const percentile = visibleLeaderboard.length > 0 ? Math.ceil((rank / visibleLeaderboard.length) * 100) : 1;
-  const titleText = percentile <= 1 ? 'TOP 1% ARMY' : percentile <= 10 ? 'TOP 10% ARMY' : `Rank #${rank}`;
+  const top1Title = t(language, 'resultTitle');
+  const top10Title = top1Title.replace('1%', '10%');
+  const rankTitle = t(language, 'currentRank').replace('{rank}', String(rank));
+  const titleText = percentile <= 1 ? top1Title : percentile <= 10 ? top10Title : rankTitle;
+  const focus = league ? getLeagueFocus(league) : null;
+  const activeFandom = getFandomPack(activeFandomId);
+  const referralLink = getReferralLink();
+  const ctaHost = (() => {
+    try {
+      return new URL(referralLink).host;
+    } catch {
+      return typeof window !== 'undefined' ? window.location.host : '';
+    }
+  })();
+  const resultShareText = `${activeFandom.shareTitle} ${titleText} - ${formatTime(elapsed)} | ${referralLink}`;
 
   useEffect(() => {
-    // Check if this was a new best time
-    const playHistory = currentUser?.gameHistory?.filter((h) => h.type === 'PLAY') || [];
-    const historicalBest = playHistory.length > 1 ? Math.min(...playHistory.slice(0, -1).map((h) => h.value)) : Infinity;
-    const isNewBest = playHistory.length === 1 || elapsed < historicalBest;
+    if (celebrationTriggeredRef.current) return;
+    celebrationTriggeredRef.current = true;
 
     if (isNewBest) {
-      confetti({
+      void launchConfetti({
         particleCount: 150,
         spread: 80,
         origin: { y: 0.4 },
@@ -519,7 +938,7 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
       playSfx('win');
       trackEvent('game_complete', { time_ms: elapsed, rank, is_new_best: 'true' });
     } else {
-      confetti({
+      void launchConfetti({
         particleCount: 40,
         spread: 40,
         origin: { y: 0.6 },
@@ -528,7 +947,7 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
       });
       trackEvent('game_complete', { time_ms: elapsed, rank, is_new_best: 'false' });
     }
-  }, [elapsed, currentUser?.gameHistory]);
+  }, [elapsed, isNewBest, rank]);
 
   // Generate share card on canvas
   useEffect(() => {
@@ -594,24 +1013,18 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
       // Nickname
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
       ctx.font = '36px Inter, sans-serif';
-      ctx.fillText(currentUser?.nickname ?? 'ARMY', 540, 1140);
+      ctx.fillText(currentUser?.nickname ?? t(language, 'unknownUser'), 540, 1140);
 
       // Appeal / Event Text
       ctx.fillStyle = '#00FFFF'; // Neon Cyan
-      ctx.font = 'bold 56px Inter, sans-serif';
-      ctx.fillText("🔍 Visit stanbeat.org", 540, 1300);
+      ctx.font = 'bold 50px Inter, sans-serif';
+      ctx.fillText(t(language, 'resultAppealText'), 540, 1300);
 
       ctx.fillStyle = '#FF0080'; // Neon Pink
-      ctx.font = 'bold 48px Inter, sans-serif';
-      ctx.fillText("1st place gets a trip to Seoul!", 540, 1400);
-
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 40px Inter, sans-serif';
-      ctx.fillText("Challenge now! Join the ARMY leaderboard", 540, 1500);
-
-      setCardGenerated(true);
+      ctx.font = 'bold 44px Inter, sans-serif';
+      ctx.fillText(t(language, 'resultCtaText', { host: ctaHost }), 540, 1400);
     });
-  }, [elapsed, titleText, currentUser, getReferralLink, grid]);
+  }, [ctaHost, elapsed, titleText, currentUser, grid, language]);
 
   const handleSaveImage = () => {
     vibrate();
@@ -639,53 +1052,69 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
 
       if (navigator.share && navigator.canShare) {
         const file = new File([blob], 'stanbeat-result.png', { type: 'image/png' });
-        const shareData = { title: 'StanBeat Result', text: `I got ${titleText} in ${formatTime(elapsed)}! Can you beat me?`, url: getReferralLink(), files: [file] };
+        const shareData = {
+          title: t(language, 'shareChallengeTitleFandom', { fandom: activeFandom.targetLabel }),
+          text: t(language, 'shareChallengeTextFandom', { challenge: activeFandom.shareTitle, title: titleText, time: formatTime(elapsed) }),
+          url: referralLink,
+          files: [file],
+        };
         if (navigator.canShare(shareData)) {
           await navigator.share(shareData);
           trackEvent('share', { method: 'native', time_ms: elapsed });
           return;
         }
       }
-      // Fallback: copy link
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
+      if (await copyTextToClipboard(resultShareText)) {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      } else {
-        window.prompt('Copy this result link:', `${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
+        showRewardToast(t(language, 'resultShareCopied'));
+        trackEvent('share', { method: 'copy', time_ms: elapsed });
+        return;
       }
+      showRewardToast(t(language, 'copyFailed'));
     } catch (e: unknown) {
       const errorName = e instanceof Error ? e.name : '';
       const errorMessage = e instanceof Error ? e.message : String(e);
       if (errorName !== 'AbortError') {
         console.warn('Share failed:', errorMessage);
-        try {
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(`${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          } else {
-            window.prompt('Copy this result link:', `${titleText} - ${formatTime(elapsed)} | ${getReferralLink()}`);
-          }
-        } catch { }
+        const copiedText = await copyTextToClipboard(resultShareText);
+        if (copiedText) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+          showRewardToast(t(language, 'resultShareCopied'));
+        } else {
+          showRewardToast(t(language, 'copyFailed'));
+        }
       }
     }
   };
 
   const handleCopyLink = async () => {
     vibrate();
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(getReferralLink());
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } else {
-        window.prompt('Copy this invite link:', getReferralLink());
-      }
-    } catch {
-      // no-op
+    const copiedLink = await copyTextToClipboard(referralLink);
+    if (copiedLink) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      showRewardToast(t(language, 'inviteShareCopied'));
+    } else {
+      showRewardToast(t(language, 'copyFailed'));
     }
   };
+
+  const focusText = (() => {
+    if (!focus) return null;
+    if (focus.mode === 'defend') {
+      return t(language, 'leagueFocusDefend', { gap: formatTime(focus.gapMs) });
+    }
+    if (focus.mode === 'summit') {
+      return t(language, 'leagueFocusFirst', { gap: formatTime(focus.gapMs) });
+    }
+    return t(language, 'leagueFocusRival', {
+      name: focus.rivalName ?? t(language, 'unknownUser'),
+      rank: String(focus.targetRank),
+      gap: formatTime(focus.gapMs),
+    });
+  })();
 
   return (
     <div className="flex-1 p-6 flex flex-col items-center text-center">
@@ -701,37 +1130,53 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
           {t(language, 'saveImage')}
         </button>
         <button onClick={handleShare} className="bg-[#FF0080] text-white rounded-lg py-2 text-sm font-bold btn-squishy">
-          {t(language, 'share')}
+          {copied ? t(language, 'linkCopied') : t(language, 'share')}
         </button>
       </div>
 
-      {(!currentUser && elapsed < 120000) && (
-        <div className="w-full max-w-[280px] bg-gradient-to-r from-[#00FFFF]/10 to-[#FF0080]/10 border border-[#00FFFF]/30 p-4 rounded-xl mt-4 animate-pulse">
-          <p className="text-white font-bold mb-2">🔥 Amazing Time!</p>
-          <p className="text-white/80 text-xs mb-3">Save your score to the global leaderboard and win genuine prizes!</p>
-          <button onClick={() => { vibrate(); login().then(() => setView('HOME')); }} className="w-full bg-[#00FFFF] text-black font-bold py-2 rounded-lg btn-squishy">
-            Save My Score
-          </button>
+      {currentUser && (
+        <div className="w-full max-w-[280px] bg-gradient-to-r from-[#00FFFF]/10 to-[#FF0080]/10 border border-[#00FFFF]/30 p-4 rounded-xl mt-4 space-y-2">
+          <p className="text-white font-bold text-sm">
+            {isNewBest
+              ? t(language, 'resultLeagueImproved', { rank: String(rank) })
+              : t(language, 'resultLeagueUnchanged', { time: formatTime(currentUser.bestTime ?? elapsed) })}
+          </p>
+          {focusText && (
+            <p className="text-[#00FFFF] text-xs font-semibold">{focusText}</p>
+          )}
+          {focus?.mode === 'rival' && focus.milestoneGapMs !== undefined && focus.milestoneRank !== undefined && (
+            <p className="text-white/60 text-[11px]">
+              {t(language, 'leagueFocusMilestone', { rank: String(focus.milestoneRank), gap: formatTime(focus.milestoneGapMs) })}
+            </p>
+          )}
         </div>
       )}
 
-      <button onClick={() => { vibrate(); const ok = consumeHeart(); if (ok) { setView('GAME'); } else { onShowHearts(); setView('HOME'); } }} className="mt-3 text-white/80 underline btn-squishy">{t(language, 'retryGame')}</button>
+      <button onClick={async () => {
+        vibrate();
+        const result = await requestGameStart(onShowHearts);
+        if (result === 'started') {
+          setView('GAME');
+        }
+      }} className="mt-3 text-white/80 underline btn-squishy">{t(language, 'retryGame')}</button>
 
       {rank > 1 && (
         <div className="mt-8 bg-black/40 border border-[#00FFFF]/30 rounded-xl p-4 w-full max-w-[280px]">
-          <p className="text-[#00FFFF] font-bold text-sm mb-2 text-center">Support the Project</p>
+          <p className="text-[#00FFFF] font-bold text-sm mb-2 text-center">{t(language, 'supportProjectTitle')}</p>
           <p className="text-white/70 text-xs mb-3 text-center leading-relaxed">
-            Support the Development of the Project through App Ratings & Links
+            {t(language, 'supportProjectDesc')}
           </p>
-          <a
-            href="https://open.spotify.com/artist/3Nrfpe0tUJi4K4DXYWgMUX"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => vibrate()}
-            className="flex items-center justify-center gap-2 w-full bg-[#1DB954]/20 border border-[#1DB954]/50 text-[#1DB954] rounded-lg py-2 text-xs font-bold btn-squishy"
-          >
-            Stream on Spotify
-          </a>
+          {runtimeConfig.projectSupportUrl ? (
+            <a
+              href={runtimeConfig.projectSupportUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => vibrate()}
+              className="flex items-center justify-center gap-2 w-full bg-[#1DB954]/20 border border-[#1DB954]/50 text-[#1DB954] rounded-lg py-2 text-xs font-bold btn-squishy"
+            >
+              {t(language, 'supportProjectCta')}
+            </a>
+          ) : null}
         </div>
       )}
     </div>
@@ -791,16 +1236,20 @@ const HistoryScreen = () => {
                   valueDisplay = formatTime(record.value);
                 } else if (record.type === 'AD') {
                   icon = '📺';
-                  label = 'Ad Reward';
-                  valueDisplay = `+${record.value} 💚`;
+                  label = t(language, 'adRewardLabel');
+                  valueDisplay = `+${record.value} ❤️`;
                 } else if (record.type === 'INVITE') {
                   icon = '🤝';
-                  label = 'Friend Invite';
-                  valueDisplay = `+${record.value} 💚`;
+                  label = t(language, 'friendInviteLabel');
+                  valueDisplay = `+${record.value} ❤️`;
                 } else if (record.type === 'DAILY') {
                   icon = '🎁';
-                  label = 'Daily Bonus';
-                  valueDisplay = `+${record.value} 💚`;
+                  label = t(language, 'dailyBonusLabel');
+                  valueDisplay = `+${record.value} ❤️`;
+                } else if (record.type === 'CANCELLED') {
+                  icon = '⛔';
+                  label = t(language, 'cancelledRunLabel');
+                  valueDisplay = formatTime(record.value);
                 }
 
                 return (
@@ -828,15 +1277,15 @@ const HistoryScreen = () => {
 // 현재 속한 리그의 다른 유저 기록(가짜+진짜)을 동기화하여 보여주며,
 // 내 랭킹과 1등과의 격차 등을 제공합니다. 비로그인 유저에게는 샘플(게스트) 리그를 보여줍니다.
 const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
-  const { setView, leaderboard, fetchLeaderboard, currentUser, language, consumeHeart, league, initLeague, getLeagueGap, getLeagueCountdown, login } = useStore();
-  const [countdown, setCountdown] = useState('30:00');
+  const { setView, leaderboard, fetchLeaderboard, currentUser, language, league, initLeague, getLeagueGap, getLeagueCountdown, login, randConfig } = useStore();
+  const [countdown, setCountdown] = useState('10:00');
   const [guestData, setGuestData] = useState<{ winners: import('./types').LeaderboardEntry[]; totalLeagues: number } | null>(null);
 
   useEffect(() => { fetchLeaderboard(); }, [fetchLeaderboard]);
 
   useEffect(() => {
     const timer = setInterval(() => {
-      initLeague(); // auto-refresh when 30 min expire
+      initLeague(); // auto-refresh league records when the 10 minute window rolls over
       setCountdown(getLeagueCountdown());
     }, 1000);
     return () => clearInterval(timer);
@@ -845,15 +1294,16 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   // Generate guest showcase data on mount if not logged in
   useEffect(() => {
     if (!currentUser) {
-      setGuestData(generateGuestShowcase());
+      setGuestData(generateGuestShowcase(randConfig));
     }
-  }, [currentUser]);
+  }, [currentUser, randConfig]);
 
   const myEntry = leaderboard.find((entry) => entry.isCurrentUser);
   const gapMs = getLeagueGap();
   const gapFormatted = formatTime(gapMs);
+  const focus = league ? getLeagueFocus(league) : null;
 
-  // ─── GUEST VIEW (Not Logged In) ───
+  // Guest view
   if (!currentUser) {
     return (
       <div className="flex-1 flex flex-col bg-[#0D0518]">
@@ -880,7 +1330,7 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
               <div className="mr-2 text-xl" title={entry.country}>{getCountryFlag(entry.country)}</div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-sm truncate text-white">{entry.nickname}</p>
-                <p className="text-white/40 text-[10px]">{t(language, 'guestLeagueLabel')} #{entry.leagueLabel}</p>
+                <p className="text-white/40 text-[10px]">{t(language, 'guestLeagueLabel')} · {entry.leagueLabel}</p>
               </div>
               <p className="font-mono text-[#00FFFF] text-sm">{formatTime(entry.time)}</p>
             </div>
@@ -891,7 +1341,7 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         <div className="sticky bottom-0 p-4 bg-[#1A0B2E] border-t border-[#FF0080]/30 text-center space-y-3">
           <p className="text-white/70 text-sm">{t(language, 'guestLeagueCta')}</p>
           <button
-            onClick={() => { vibrate(); login().then(() => setView('HOME')); }}
+            onClick={() => { vibrate(); login().then((success) => { if (success) setView('HOME'); }); }}
             className="w-full bg-gradient-to-r from-[#FF0080] to-[#FF6B00] text-white font-bold py-3 rounded-lg btn-squishy text-lg"
           >
             {t(language, 'guestLeagueBtn')}
@@ -901,7 +1351,7 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     );
   }
 
-  // ─── LOGGED-IN VIEW ───
+  // Logged-in view
   return (
     <div className="flex-1 flex flex-col bg-[#0D0518]">
       <div className="p-4 flex items-center gap-4 border-b border-white/10 bg-[#1A0B2E]">
@@ -914,37 +1364,52 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         <div className="px-4 py-3 bg-gradient-to-r from-[#FF0080]/20 to-[#0D0518] border-b border-[#FF0080]/20">
           <div className="flex items-center justify-between text-xs">
             <p className="text-[#00FFFF] font-bold text-sm">
-              {t(language, 'leagueInfo', { leagueNum: String(league.leagueId), players: String(league.leagueSize), totalLeagues: String(league.totalLeagues) })}
+              {t(language, 'leagueInfo', { leagueNum: league.displayName || league.leagueId, players: String(league.leagueSize), totalLeagues: String(league.totalLeagues) })}
             </p>
           </div>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-white/50 text-[10px]">{t(language, 'leagueSyncNotice')}</span>
-            <span className="text-[#00FFFF] text-[10px] font-mono">{countdown}</span>
+            <span className="text-white/30 text-[10px]">·</span>
+            <span className="text-white/50 text-[10px]">{t(language, 'nextSync', { time: countdown })}</span>
           </div>
         </div>
       )}
 
-      {/* No Record State — show CTA */}
+      {/* No record state - show CTA */}
       {myEntry === undefined && (
         <div className="mx-4 mt-3 rounded-lg bg-gradient-to-r from-[#00FFFF]/20 to-[#FF0080]/20 border border-[#00FFFF]/30 p-4 text-center space-y-3">
           <p className="text-white text-lg font-bold">{t(language, 'noRecordYet')}</p>
           <p className="text-white/50 text-xs">{t(language, 'overallPrize')} · {t(language, 'leaguePrize')}</p>
-          <button onClick={() => { vibrate(); const ok = consumeHeart(); if (ok) { setView('GAME'); } else { onShowHearts(); } }} className="w-full bg-gradient-to-r from-[#FF0080] to-[#FF6B00] text-white font-bold py-3 rounded-lg btn-squishy text-lg">
+          <button onClick={async () => {
+            vibrate();
+            const result = await requestGameStart(onShowHearts);
+            if (result === 'started') {
+              setView('GAME');
+            }
+          }} className="w-full bg-gradient-to-r from-[#FF0080] to-[#FF6B00] text-white font-bold py-3 rounded-lg btn-squishy text-lg">
             {t(language, 'startGameCta')}
           </button>
         </div>
       )}
 
-      {/* Almost #1 Motivational Banner — only show when user HAS a record */}
-      {myEntry && myEntry.rank > 1 && (
-        <div className="mx-4 mt-3 rounded-lg bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 p-3 text-center">
+      {myEntry && focus && (
+        <div className={`mx-4 mt-3 rounded-lg border p-3 text-center ${focus.mode === 'defend' ? 'bg-gradient-to-r from-emerald-500/15 to-cyan-500/15 border-emerald-400/30' : 'bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-yellow-500/30'}`}>
           <p className="text-white text-sm font-bold">
-            {t(language, 'almostFirst', { gap: gapFormatted })}
+            {focus.mode === 'defend'
+              ? t(language, 'leagueFocusDefend', { gap: formatTime(focus.gapMs) })
+              : focus.mode === 'summit'
+                ? t(language, 'leagueFocusFirst', { gap: gapFormatted })
+                : t(language, 'leagueFocusRival', { name: focus.rivalName ?? t(language, 'unknownUser'), rank: String(focus.targetRank), gap: formatTime(focus.gapMs) })}
           </p>
+          {focus.mode === 'rival' && focus.milestoneGapMs !== undefined && focus.milestoneRank !== undefined && (
+            <p className="text-white/60 text-[11px] mt-1">
+              {t(language, 'leagueFocusMilestone', { rank: String(focus.milestoneRank), gap: formatTime(focus.milestoneGapMs) })}
+            </p>
+          )}
           <div className="w-full bg-white/10 rounded-full h-2 mt-2 overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-yellow-400 to-[#FF0080] rounded-full transition-all duration-700"
-              style={{ width: `${Math.max(10, 100 - (gapMs / 150))}%` }}
+              className={`h-full rounded-full transition-all duration-700 ${focus.mode === 'defend' ? 'bg-gradient-to-r from-emerald-300 to-cyan-400' : 'bg-gradient-to-r from-yellow-400 to-[#FF0080]'}`}
+              style={{ width: `${focus.mode === 'defend' ? Math.min(100, Math.max(12, focus.gapMs / 40)) : Math.min(100, Math.max(12, 100 - (focus.gapMs / 180)))}%` }}
             />
           </div>
         </div>
@@ -970,7 +1435,13 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 
       {currentUser && myEntry && (
         <div className="sticky bottom-0 p-4 bg-[#1A0B2E] border-t border-[#FF0080]/30">
-          <button onClick={() => { vibrate(); const ok = consumeHeart(); if (ok) { setView('GAME'); } else { onShowHearts(); } }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy">
+          <button onClick={async () => {
+            vibrate();
+            const result = await requestGameStart(onShowHearts);
+            if (result === 'started') {
+              setView('GAME');
+            }
+          }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy">
             {t(language, 'retry')}
           </button>
         </div>
@@ -984,13 +1455,13 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 // 통계 확인, 강제 데이터 초기화, 가짜 봇 생성, 공지사항 작성 등의 운영 기능을 담당합니다.
 const AdminScreen = () => {
   const {
-    setView, leaderboard, notice, setNotice,
+    setView, notice, setNotice,
     resetSeason, banUser, unbanUser, currentUser, editUserHeart,
     showNoticePopup, setShowNoticePopup, language,
     adminStats, adminUsers, fetchAdminData,
-    botConfig, setBotConfig, generateDummyBots,
+    botConfig, setBotConfig,
     adminLoading, adminShowAll, setAdminShowAll,
-    adminLog, startAdminLiveStats, stopAdminLiveStats,
+    adminLog, startAdminLiveStats, stopAdminLiveStats, showRewardToast, showConfirmDialog,
   } = useStore();
 
   useEffect(() => {
@@ -1006,9 +1477,10 @@ const AdminScreen = () => {
   const [adminSortBy, setAdminSortBy] = useState<'TIME' | 'HEARTS' | 'NEWEST'>('NEWEST');
   const [showBanned, setShowBanned] = useState(false);
   const [showLog, setShowLog] = useState(false);
-  const [botCount, setBotCount] = useState(5);
 
-  if (currentUser?.role !== 'ADMIN') return <div className="flex-1 p-4 flex items-center justify-center text-white/50">Unauthorized Access</div>;
+  if (currentUser?.role !== 'ADMIN') {
+    return <div className="flex-1 p-4 flex items-center justify-center text-white/50">{t(language, 'unauthorizedAccess')}</div>;
+  }
 
   const [botMean, setBotMean] = useState(botConfig.mean / 1000);
   const [botStd, setBotStd] = useState(botConfig.stdDev / 1000);
@@ -1018,7 +1490,7 @@ const AdminScreen = () => {
     setBotStd(botConfig.stdDev / 1000);
   }, [botConfig.mean, botConfig.stdDev]);
 
-  const riskWarning = leaderboard.some((entry) => entry.time <= 1000);
+  const riskWarning = adminUsers.some((entry) => typeof entry.time === 'number' && entry.time <= 1000);
 
   // DAU Calculation + User stats
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -1030,11 +1502,12 @@ const AdminScreen = () => {
       if (u.banned) return false;
       if (!u.updatedAt) return false;
       try {
-        const d = u.updatedAt.toDate ? u.updatedAt.toDate() : new Date(u.updatedAt);
+        const d = resolveAdminUpdatedAt(u.updatedAt);
+        if (!d) return false;
         return d.toISOString().slice(0, 10) === todayStr;
       } catch { return false; }
     }).length
-    : leaderboard.filter((entry) => !entry.banned).length;
+    : 0;
 
   // CSV Export (#12)
   const handleExportCSV = () => {
@@ -1057,9 +1530,9 @@ const AdminScreen = () => {
         <button onClick={() => { vibrate(); setView('HOME'); }} className="text-white/70 btn-squishy"><ArrowLeft /></button>
         <div className="flex items-center gap-2 flex-col">
           <h2 className="text-white font-black text-xl">{t(language, 'adminTitle')}</h2>
-          <span className="text-[10px] bg-[#FF0080]/20 text-[#FF0080] border border-[#FF0080] px-3 py-0.5 rounded-full font-bold shadow-[0_0_10px_rgba(255,0,128,0.3)] tracking-widest">👑 GOD MODE ACTIVE</span>
+          <span className="text-[10px] bg-[#FF0080]/20 text-[#FF0080] border border-[#FF0080] px-3 py-0.5 rounded-full font-bold shadow-[0_0_10px_rgba(255,0,128,0.3)] tracking-widest">{t(language, 'adminGodMode')}</span>
         </div>
-        <button onClick={() => { vibrate(); fetchAdminData(); }} className="text-[#00FFFF] btn-squishy" aria-label="Refresh" title="Refresh Data">
+        <button onClick={() => { vibrate(); fetchAdminData(); }} className="text-[#00FFFF] btn-squishy" aria-label={t(language, 'refreshData')} title={t(language, 'refreshData')}>
           <RefreshCw size={20} className={adminLoading ? 'animate-spin' : ''} />
         </button>
       </div>
@@ -1068,51 +1541,56 @@ const AdminScreen = () => {
       {adminLoading && (
         <div className="flex items-center justify-center py-2">
           <div className="w-5 h-5 border-2 border-[#00FFFF] border-t-transparent rounded-full animate-spin mr-2" />
-          <span className="text-white/50 text-xs">Loading admin data...</span>
+          <span className="text-white/50 text-xs">{t(language, 'loadingAdmin')}</span>
         </div>
       )}
 
       {/* Metrics */}
       <div className="grid grid-cols-2 gap-3">
-        <MetricCard label="DAU" value={String(dau)} icon={<Users />} color="text-[#00FFFF]" />
-        <MetricCard label="Ad Revenue" value={`$${(adminStats?.adRevenue || 0).toFixed(2)}`} icon={<DollarSign />} color="text-green-400" />
-        <MetricCard label="Global Hearts" value={String(adminStats?.totalHeartsUsed || 0)} icon={<Play />} color="text-[#FF0080]" />
-        <MetricCard label="Risk Meter" value={riskWarning ? 'Warning' : 'Normal'} icon={<ShieldAlert />} color={riskWarning ? 'text-red-400' : 'text-[#00FFFF]'} />
+        <MetricCard label={t(language, 'dau')} value={String(dau)} icon={<Users />} color="text-[#00FFFF]" />
+        <MetricCard label={t(language, 'adRevenueLabel')} value={`$${(adminStats?.adRevenue || 0).toFixed(2)}`} icon={<DollarSign />} color="text-green-400" />
+        <MetricCard label={t(language, 'globalHearts')} value={String(adminStats?.totalHeartsUsed || 0)} icon={<Play />} color="text-[#FF0080]" />
+        <MetricCard label={t(language, 'riskMeter')} value={riskWarning ? t(language, 'warning') : t(language, 'normal')} icon={<ShieldAlert />} color={riskWarning ? 'text-red-400' : 'text-[#00FFFF]'} />
       </div>
 
       {/* User Stats Summary (#9) */}
       <div className="flex items-center justify-between bg-black/30 rounded-lg px-3 py-2 text-xs text-white/70 border border-white/5">
-        <span>👥 Total: <strong className="text-white">{totalUsers}</strong></span>
-        <span>✅ Active: <strong className="text-green-400">{activeUsers}</strong></span>
-        <span>🚫 Banned: <strong className="text-red-400">{bannedUsers}</strong></span>
+        <span>{t(language, 'totalLabel')} <strong className="text-white">{totalUsers}</strong></span>
+        <span>{t(language, 'activeLabel')} <strong className="text-green-400">{activeUsers}</strong></span>
+        <span>{t(language, 'bannedLabel')} <strong className="text-red-400">{bannedUsers}</strong></span>
       </div>
 
       {/* Season + Bots */}
       <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-3">
-        <button onClick={() => { vibrate(); if (confirm('⚠️ Are you sure you want to reset the season? This will DELETE all leaderboard data.')) { resetSeason(); } }} className="w-full bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg py-2 flex items-center justify-center gap-2 btn-squishy">
+        <button
+          onClick={() => {
+            vibrate();
+            showConfirmDialog({
+              title: t(language, 'resetSeasonBtn'),
+              message: t(language, 'resetSeasonConfirm'),
+              confirmLabel: t(language, 'resetSeasonBtn'),
+              cancelLabel: t(language, 'closeModal'),
+              tone: 'danger',
+              onConfirm: () => resetSeason(),
+            });
+          }}
+          className="w-full bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg py-2 flex items-center justify-center gap-2 btn-squishy"
+        >
           <Trash2 size={16} /> {t(language, 'resetSeasonBtn')}
         </button>
 
-        {/* Bot Generation (#10) */}
-        <div className="flex items-center gap-2">
-          <input type="number" min={1} max={50} value={botCount} onChange={e => setBotCount(Math.max(1, Math.min(50, Number(e.target.value))))} className="w-16 bg-black/30 border border-white/20 text-white rounded px-2 py-1 text-sm outline-none" />
-          <button onClick={() => { vibrate(); if (confirm(`Generate ${botCount} dummy bots?`)) { generateDummyBots(botCount); } }} className="flex-1 bg-purple-500/20 border border-purple-500/40 text-purple-300 rounded-lg py-2 text-sm font-bold btn-squishy">
-            🤖 Generate {botCount} Bots
-          </button>
-        </div>
-
         <div className="pt-2 border-t border-white/10">
-          <p className="text-[#00FFFF] font-semibold mb-2 text-sm flex items-center gap-1">🤖 봇 설정 (Bot Settings)</p>
+          <p className="text-[#00FFFF] font-semibold mb-2 text-sm flex items-center gap-1">{t(language, 'botSettingsTitle')}</p>
           <div className="flex items-center gap-2 mb-2">
-            <label className="text-white/70 text-xs w-20">평균 시간(초)</label>
+            <label className="text-white/70 text-xs w-20">{t(language, 'meanTimeLabel')}</label>
             <input type="number" min="10" max="180" step="1" value={botMean} onChange={e => setBotMean(Number(e.target.value))} className="flex-1 bg-black/30 border border-white/20 text-white rounded px-2 py-1 text-sm outline-none focus:border-[#00FFFF]" />
           </div>
           <div className="flex items-center gap-2 mb-2">
-            <label className="text-white/70 text-xs w-20">표준편차(초)</label>
+            <label className="text-white/70 text-xs w-20">{t(language, 'stdDevLabel')}</label>
             <input type="number" min="1" max="100" step="1" value={botStd} onChange={e => setBotStd(Number(e.target.value))} className="flex-1 bg-black/30 border border-white/20 text-white rounded px-2 py-1 text-sm outline-none focus:border-[#00FFFF]" />
           </div>
-          <button onClick={() => { vibrate(); setBotConfig({ mean: botMean * 1000, stdDev: botStd * 1000 }); alert('봇 설정이 저장되었습니다.'); }} className="w-full bg-[#00FFFF]/20 border border-[#00FFFF]/40 text-[#00FFFF] rounded py-1.5 text-sm font-bold btn-squishy mt-1 hover:bg-[#00FFFF]/30">
-            Apply Config
+          <button onClick={() => { vibrate(); setBotConfig({ mean: botMean * 1000, stdDev: botStd * 1000 }); showRewardToast(t(language, 'botConfigSaved')); }} className="w-full bg-[#00FFFF]/20 border border-[#00FFFF]/40 text-[#00FFFF] rounded py-1.5 text-sm font-bold btn-squishy mt-1 hover:bg-[#00FFFF]/30">
+            {t(language, 'applyBtn')}
           </button>
         </div>
       </div>
@@ -1137,15 +1615,15 @@ const AdminScreen = () => {
           <div className="flex gap-2">
             <input
               type="text"
-              placeholder="Search..."
+              placeholder={t(language, 'searchPlaceholder')}
               value={adminSearchQuery}
               onChange={e => setAdminSearchQuery(e.target.value)}
               className="w-24 bg-black/30 border border-white/20 text-white/70 text-xs rounded px-2 outline-none"
             />
             <select value={adminSortBy} onChange={(e) => setAdminSortBy(e.target.value as 'TIME' | 'HEARTS' | 'NEWEST')} className="bg-black/30 border border-white/20 text-white/70 text-xs rounded p-1 outline-none">
-              <option value="NEWEST">최신순 (Newest)</option>
-              <option value="TIME">최고기록순 (Best Time)</option>
-              <option value="HEARTS">하트보유순 (Most Hearts)</option>
+              <option value="NEWEST">{t(language, 'sortNewest')}</option>
+              <option value="TIME">{t(language, 'sortBestTime')}</option>
+              <option value="HEARTS">{t(language, 'sortMostHearts')}</option>
             </select>
           </div>
         </div>
@@ -1154,10 +1632,10 @@ const AdminScreen = () => {
         <div className="flex items-center gap-3 text-[10px]">
           <label className="flex items-center gap-1 text-white/50 cursor-pointer">
             <input type="checkbox" checked={showBanned} onChange={e => setShowBanned(e.target.checked)} className="accent-red-500" />
-            Show Banned
+            {t(language, 'showBanned')}
           </label>
           <button onClick={() => { vibrate(); handleExportCSV(); }} className="ml-auto text-[#00FFFF] border border-[#00FFFF]/30 px-2 py-0.5 rounded btn-squishy hover:bg-[#00FFFF]/10">
-            📥 Export CSV
+            {t(language, 'exportCsv')}
           </button>
         </div>
 
@@ -1167,7 +1645,7 @@ const AdminScreen = () => {
             banned?: boolean;
             time?: number;
             hearts?: number;
-            updatedAt?: { toMillis?: () => number } | string | number | Date;
+            updatedAt?: { toMillis?: () => number; toDate?: () => Date } | string | number | Date;
             gameHistory?: HistoryEvent[];
             avatarUrl?: string;
             nickname?: string;
@@ -1185,7 +1663,7 @@ const AdminScreen = () => {
             return new Date(value as string | number | Date).getTime();
           };
 
-          const sortedUsers = [...(adminUsers.length > 0 ? adminUsers : leaderboard) as AdminListEntry[]].filter(u => {
+          const sortedUsers = [...adminUsers as AdminListEntry[]].filter(u => {
             if (!showBanned && u.banned) return false;
             // Fuzzy search (#6 includes email)
             if (adminSearchQuery) {
@@ -1207,7 +1685,7 @@ const AdminScreen = () => {
           if (sortedUsers.length === 0) {
             return (
               <div className="flex flex-col items-center justify-center py-8 text-white/40">
-                <p className="text-sm">No users found</p>
+                <p className="text-sm">{t(language, 'noUsersFound')}</p>
               </div>
             );
           }
@@ -1219,7 +1697,7 @@ const AdminScreen = () => {
               {sortedUsers.slice(0, displayLimit).map((entry) => {
                 const isSelected = selectedUserId === entry.id;
                 const lastLoginMs = getUpdatedAtMs(entry.updatedAt);
-                const lastLogin = lastLoginMs > 0 ? new Date(lastLoginMs).toLocaleString() : 'Unknown';
+                const lastLogin = lastLoginMs > 0 ? new Date(lastLoginMs).toLocaleString() : '-';
                 const history = Array.isArray(entry.gameHistory) ? entry.gameHistory : [];
                 const playHistoryCount = history.filter((h) => h.type === 'PLAY').length;
                 const adRevenueApprox = history.filter((h) => h.type === 'AD').reduce((acc, val) => acc + (val.value > 0 ? 0.35 : 0), 0).toFixed(2);
@@ -1228,37 +1706,69 @@ const AdminScreen = () => {
                   <div key={entry.id} className={`flex flex-col bg-black/20 p-2 rounded transition-all ${isSelected ? 'ring-1 ring-[#00FFFF]' : ''} ${entry.banned ? 'opacity-50' : ''}`}>
                     <div className="flex items-center justify-between cursor-pointer" onClick={() => setSelectedUserId(isSelected ? null : entry.id)}>
                       <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <img src={entry.avatarUrl || `https://picsum.photos/seed/${entry.id}/80/80`} width="40" height="40" className="w-8 h-8 rounded-full flex-shrink-0 border border-white/10" />
+                        <img src={entry.avatarUrl || generateAvatarUrl(entry.id, entry.nickname || '?')} width="40" height="40" className="w-8 h-8 rounded-full flex-shrink-0 border border-white/10" />
                         <div className="min-w-0">
-                          <p className="text-white text-sm truncate font-bold">{entry.nickname || 'Unknown User'}</p>
+                          <p className="text-white text-sm truncate font-bold">{entry.nickname || t(language, 'unknownUser')}</p>
                           <div className="flex items-center gap-2 text-white/50 text-[10px]">
                             <span>{getCountryFlag(entry.country || 'ZZ')}</span>
                             {entry.time && <span className="text-[#00FFFF] font-mono">{formatTime(entry.time)}</span>}
-                            {entry.hearts !== undefined && <span className="text-[#FF0080]">❤️{entry.hearts}</span>}
-                            <span className="text-yellow-500">{entry.role === 'ADMIN' ? '[ADMIN]' : ''}</span>
-                            {entry.banned && <span className="text-red-400">[BANNED]</span>}
+                            {entry.hearts !== undefined && <span className="text-[#FF0080]">❤️ {entry.hearts}</span>}
+                            <span className="text-yellow-500">{entry.role === 'ADMIN' ? t(language, 'adminRole') : ''}</span>
+                            {entry.banned && <span className="text-red-400">{t(language, 'bannedRole')}</span>}
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
                         {currentUser?.id !== entry.id && !entry.banned && (
-                          <button onClick={(e) => { e.stopPropagation(); vibrate(); if (confirm(`Ban user "${entry.nickname || entry.id}"?`)) banUser(entry.id); }} className="bg-red-500/20 text-red-500 border border-red-500/50 text-xs px-2 py-1 rounded btn-squishy">🚫 Ban</button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              vibrate();
+                              showConfirmDialog({
+                                title: t(language, 'banBtn'),
+                                message: t(language, 'banConfirm', { name: entry.nickname || entry.id }),
+                                confirmLabel: t(language, 'banBtn'),
+                                cancelLabel: t(language, 'closeModal'),
+                                tone: 'danger',
+                                onConfirm: () => banUser(entry.id),
+                              });
+                            }}
+                            className="bg-red-500/20 text-red-500 border border-red-500/50 text-xs px-2 py-1 rounded btn-squishy"
+                          >
+                            {t(language, 'banBtn')}
+                          </button>
                         )}
                         {currentUser?.id !== entry.id && entry.banned && (
-                          <button onClick={(e) => { e.stopPropagation(); vibrate(); if (confirm(`Unban user "${entry.nickname || entry.id}"?`)) unbanUser(entry.id); }} className="bg-green-500/20 text-green-400 border border-green-500/50 text-xs px-2 py-1 rounded btn-squishy">✅ Unban</button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              vibrate();
+                              showConfirmDialog({
+                                title: t(language, 'unbanBtn'),
+                                message: t(language, 'unbanConfirm', { name: entry.nickname || entry.id }),
+                                confirmLabel: t(language, 'unbanBtn'),
+                                cancelLabel: t(language, 'closeModal'),
+                                tone: 'default',
+                                onConfirm: () => unbanUser(entry.id),
+                              });
+                            }}
+                            className="bg-green-500/20 text-green-400 border border-green-500/50 text-xs px-2 py-1 rounded btn-squishy"
+                          >
+                            {t(language, 'unbanBtn')}
+                          </button>
                         )}
                       </div>
                     </div>
 
                     {isSelected && (
                       <div className="mt-3 pt-3 border-t border-white/10 text-xs text-white/70 space-y-1 bg-black/40 p-3 rounded-lg">
-                        <p><strong className="text-white/90">Email:</strong> {entry.email || 'N/A'}</p>
-                        <p><strong className="text-white/90">Last Login:</strong> {lastLogin}</p>
-                        <p><strong className="text-white/90">Country/Region:</strong> {entry.country} {getCountryFlag(entry.country)}</p>
-                        <p><strong className="text-white/90">Total Games Played:</strong> {playHistoryCount} times</p>
-                        <p><strong className="text-white/90">Est. Ad Revenue:</strong> ${adRevenueApprox}</p>
-                        <p><strong className="text-white/90">Referral Code:</strong> {entry.referralCode || 'N/A'}</p>
-                        {entry.referredBy && <p><strong className="text-white/90">Referred By:</strong> {entry.referredBy}</p>}
+                        <p><strong className="text-white/90">{t(language, 'emailLabel')}</strong> {entry.email || '-'}</p>
+                        <p><strong className="text-white/90">{t(language, 'lastLoginLabel')}</strong> {lastLogin}</p>
+                        <p><strong className="text-white/90">{t(language, 'countryRegionLabel')}</strong> {entry.country || '-'} {getCountryFlag(entry.country || 'ZZ')}</p>
+                        <p><strong className="text-white/90">{t(language, 'totalGamesPlayed')}</strong> {playHistoryCount} {t(language, 'timesUnit')}</p>
+                        <p><strong className="text-white/90">{t(language, 'estAdRevenue')}</strong> ${adRevenueApprox}</p>
+                        <p><strong className="text-white/90">{t(language, 'referralCodeLabel')}</strong> {entry.referralCode || '-'}</p>
+                        {entry.referredBy && <p><strong className="text-white/90">{t(language, 'referredByLabel')}</strong> {entry.referredBy}</p>}
                       </div>
                     )}
                   </div>
@@ -1266,7 +1776,7 @@ const AdminScreen = () => {
               })}
               {sortedUsers.length > 20 && (
                 <button onClick={() => { vibrate(); setAdminShowAll(!adminShowAll); }} className="w-full text-center text-[#00FFFF] text-xs py-2 border border-[#00FFFF]/20 rounded mt-2 btn-squishy hover:bg-[#00FFFF]/10">
-                  {adminShowAll ? 'Show Less (20)' : `Load All (${sortedUsers.length})`}
+                  {adminShowAll ? t(language, 'showLess', { count: '20' }) : t(language, 'loadAll', { count: String(sortedUsers.length) })}
                 </button>
               )}
             </>
@@ -1295,13 +1805,13 @@ const AdminScreen = () => {
       {/* Admin Activity Log (#11) */}
       <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10">
         <button onClick={() => setShowLog(!showLog)} className="flex items-center justify-between w-full text-white font-semibold text-sm">
-          📋 Admin Activity Log ({adminLog.length})
+          {t(language, 'adminLogTitle', { count: String(adminLog.length) })}
           <span className="text-white/40 text-xs">{showLog ? '▲' : '▼'}</span>
         </button>
         {showLog && (
           <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
             {adminLog.length === 0 ? (
-              <p className="text-white/30 text-xs">No admin actions recorded this session.</p>
+              <p className="text-white/30 text-xs">{t(language, 'noAdminActions')}</p>
             ) : (
               [...adminLog].reverse().map((entry, i) => (
                 <div key={i} className="flex items-center gap-2 text-[10px] text-white/60 bg-black/20 rounded px-2 py-1">
@@ -1315,13 +1825,218 @@ const AdminScreen = () => {
         )}
       </div>
 
+      {/* Game Play Records Section */}
+      <GameplayRecordsPanel adminUsers={adminUsers} />
+
       {/* Ad Config Section */}
       <AdConfigPanel />
+
+      {/* Random Algorithm Control Panel */}
+      <RandomAlgorithmPanel />
     </div>
   );
 };
 
-// ─── Ad Config Admin Panel ────────────────────────────────────────
+
+// Game play records admin panel
+const GameplayRecordsPanel = ({ adminUsers }: { adminUsers: AdminUserRow[] }) => {
+  const { language } = useStore();
+  const [gpOpen, setGpOpen] = useState(true);
+  const [gpSearch, setGpSearch] = useState('');
+  const [gpSort, setGpSort] = useState<'BEST_TIME' | 'MOST_GAMES' | 'RECENT'>('RECENT');
+  const [gpExpandedUser, setGpExpandedUser] = useState<string | null>(null);
+
+  // Filter to real users with actual gameHistory entries (bots don't have real game history)
+  const realUsers = adminUsers.filter(u => {
+    if (!Array.isArray(u.gameHistory) || u.gameHistory.length === 0) return false;
+    // Must have at least 1 PLAY entry to be considered a real player
+    return u.gameHistory.some(h => h.type === 'PLAY');
+  });
+
+  const filtered = realUsers.filter(u => {
+    if (!gpSearch) return true;
+    const q = gpSearch.toLowerCase();
+    return (u.nickname || '').toLowerCase().includes(q)
+      || (u.email || '').toLowerCase().includes(q)
+      || u.id.toLowerCase().includes(q);
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (gpSort === 'BEST_TIME') {
+      return (a.time ?? Infinity) - (b.time ?? Infinity);
+    }
+    if (gpSort === 'MOST_GAMES') {
+      const aGames = (a.gameHistory || []).filter(h => h.type === 'PLAY').length;
+      const bGames = (b.gameHistory || []).filter(h => h.type === 'PLAY').length;
+      return bGames - aGames;
+    }
+    // RECENT
+    const getMs = (u: AdminUserRow) => {
+      const h = (u.gameHistory || []);
+      if (h.length === 0) return 0;
+      const lastDate = h[h.length - 1].date;
+      return lastDate ? new Date(lastDate).getTime() : 0;
+    };
+    return getMs(b) - getMs(a);
+  });
+
+  const eventIcon = (type: string) => {
+    switch (type) {
+      case 'PLAY': return '🎮';
+      case 'AD': return '📺';
+      case 'DAILY': return '🎁';
+      case 'REFERRAL': return '🤝';
+      case 'PENALTY': return '⚠️';
+      case 'CANCELLED': return '⛔';
+      default: return '📝';
+    }
+  };
+
+  const eventColor = (type: string) => {
+    switch (type) {
+      case 'PLAY': return 'text-[#00FFFF]';
+      case 'AD': return 'text-green-400';
+      case 'DAILY': return 'text-yellow-400';
+      case 'REFERRAL': return 'text-purple-400';
+      case 'PENALTY': return 'text-red-400';
+      default: return 'text-white/50';
+    }
+  };
+
+  return (
+    <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-3">
+      <button onClick={() => setGpOpen(!gpOpen)} className="flex items-center justify-between w-full">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🎮</span>
+          <div>
+            <h3 className="text-white font-bold text-sm text-left">{t(language, 'gamePlayRecords')}</h3>
+            <p className="text-white/40 text-[10px] text-left">{t(language, 'realUserRecords', { count: String(sorted.length) })}</p>
+          </div>
+        </div>
+        <span className="text-white/40 text-xs">{gpOpen ? '▲' : '▼'}</span>
+      </button>
+
+      {gpOpen && (
+        <div className="space-y-3 pt-2 border-t border-white/10">
+          {/* Controls */}
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder={t(language, 'searchPlaceholder')}
+              value={gpSearch}
+              onChange={e => setGpSearch(e.target.value)}
+              className="flex-1 bg-black/30 border border-white/20 text-white text-xs rounded px-2 py-1.5 outline-none focus:border-[#00FFFF]"
+            />
+            <select
+              value={gpSort}
+              onChange={e => setGpSort(e.target.value as typeof gpSort)}
+              className="bg-black/30 border border-white/20 text-white/70 text-xs rounded px-2 py-1.5 outline-none"
+            >
+              <option value="RECENT">{t(language, 'recentActivity')}</option>
+              <option value="BEST_TIME">{t(language, 'bestTimeSort')}</option>
+              <option value="MOST_GAMES">{t(language, 'gamesSort')}</option>
+            </select>
+          </div>
+
+          {sorted.length === 0 ? (
+            <div className="text-center py-6 text-white/30 text-sm">
+              <p>{t(language, 'noRealUserRecords')}</p>
+              <p className="text-[10px] mt-1">{t(language, 'realUserRecordsDesc')}</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+              {sorted.map(user => {
+                const history = user.gameHistory || [];
+                const playEvents = history.filter(h => h.type === 'PLAY');
+                const adEvents = history.filter(h => h.type === 'AD');
+                const bestPlayTime = playEvents.length > 0
+                  ? Math.min(...playEvents.map(h => h.value))
+                  : null;
+                const isExpanded = gpExpandedUser === user.id;
+
+                return (
+                  <div key={user.id} className={`bg-black/30 rounded-lg border ${isExpanded ? 'border-[#00FFFF]/40' : 'border-white/5'} overflow-hidden`}>
+                    {/* Summary Row */}
+                    <div
+                      className="flex items-center gap-2 p-2.5 cursor-pointer hover:bg-white/5 transition-colors"
+                      onClick={() => setGpExpandedUser(isExpanded ? null : user.id)}
+                    >
+                      <img
+                        src={user.avatarUrl || generateAvatarUrl(user.id, user.nickname || '?')}
+                        className="w-8 h-8 rounded-full border border-white/10 flex-shrink-0"
+                        alt=""
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-xs font-bold truncate">{user.nickname || t(language, 'unknownUser')}</p>
+                        <div className="flex items-center gap-2 text-[10px] text-white/50">
+                          <span>{getCountryFlag(user.country || 'ZZ')}</span>
+                          {bestPlayTime && <span className="text-[#00FFFF] font-mono">{formatTime(bestPlayTime)}</span>}
+                          <span>🎮 {playEvents.length}</span>
+                          <span>📺 {adEvents.length}</span>
+                          {user.banned && <span className="text-red-400">{t(language, 'bannedRole')}</span>}
+                        </div>
+                      </div>
+                      <span className="text-white/30 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                    </div>
+
+                    {/* Expanded: Full Game History Timeline */}
+                    {isExpanded && (
+                      <div className="px-3 pb-3 border-t border-white/5">
+                        {/* Stats Summary */}
+                        <div className="grid grid-cols-3 gap-2 py-2 text-center">
+                          <div className="bg-black/40 rounded-lg p-2">
+                            <p className="text-[#00FFFF] font-mono text-sm font-bold">{bestPlayTime ? formatTime(bestPlayTime) : '-'}</p>
+                            <p className="text-white/40 text-[9px]">{t(language, 'bestTimeLabel')}</p>
+                          </div>
+                          <div className="bg-black/40 rounded-lg p-2">
+                            <p className="text-white font-bold text-sm">{playEvents.length}</p>
+                            <p className="text-white/40 text-[9px]">{t(language, 'gamesLabel')}</p>
+                          </div>
+                          <div className="bg-black/40 rounded-lg p-2">
+                            <p className="text-green-400 font-bold text-sm">${(adEvents.length * 0.35).toFixed(2)}</p>
+                            <p className="text-white/40 text-[9px]">{t(language, 'adRevEst')}</p>
+                          </div>
+                        </div>
+
+                        {/* Email + Info */}
+                        <p className="text-white/40 text-[10px] mb-2">
+                          📧 {user.email || 'N/A'} &nbsp;|&nbsp; ❤️ {user.hearts ?? 0} hearts
+                        </p>
+
+                        {/* Timeline */}
+                        <div className="space-y-0.5 max-h-52 overflow-y-auto">
+                          <p className="text-white/50 text-[10px] font-bold mb-1 sticky top-0 bg-[#1A0B2E] py-1">{t(language, 'gameHistoryTitle', { count: String(history.length) })}</p>
+                          {[...history].reverse().slice(0, 50).map((event, i) => (
+                            <div key={i} className="flex items-center gap-2 text-[10px] py-0.5">
+                              <span>{eventIcon(event.type)}</span>
+                              <span className={`font-bold w-14 ${eventColor(event.type)}`}>{event.type}</span>
+                              <span className="text-white/70 font-mono">
+                                {event.type === 'PLAY' ? formatTime(event.value) : `+${event.value} ❤️`}
+                              </span>
+                              <span className="text-white/30 ml-auto text-[9px]">
+                                {event.date ? new Date(event.date).toLocaleString() : '-'}
+                              </span>
+                            </div>
+                          ))}
+                          {history.length > 50 && (
+                            <p className="text-white/30 text-[9px] text-center py-1">{t(language, 'moreEvents', { count: String(history.length - 50) })}</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Ad config admin panel
+
 const AdConfigPanel = () => {
   const { adConfig, setAdConfig, language } = useStore();
 
@@ -1338,18 +2053,18 @@ const AdConfigPanel = () => {
     <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-2">
       <div className="flex items-center gap-2 mb-2">
         <Settings size={16} className="text-[#00FFFF]" />
-        <p className="text-white font-semibold">광고 설정 (Ad Config)</p>
+        <p className="text-white font-semibold">{t(language, 'adConfigTitle')}</p>
       </div>
 
       <Toggle
-        label="🎬 리워드 동영상 (Rewarded Video)"
+        label={t(language, 'rewardedVideoToggle')}
         enabled={adConfig.rewardedVideo}
         onToggle={() => setAdConfig({ rewardedVideo: !adConfig.rewardedVideo })}
       />
       {adConfig.rewardedVideo && (
         <div className="space-y-2 pl-4 pb-2">
           <div className="flex items-center gap-2">
-            <span className="text-white/50 text-xs">동영상 당 하트 보상:</span>
+            <span className="text-white/50 text-xs">{t(language, 'heartPerVideo')}</span>
             <select
               value={adConfig.rewardedVideoRewardHearts}
               onChange={(e) => setAdConfig({ rewardedVideoRewardHearts: Number(e.target.value) })}
@@ -1361,51 +2076,373 @@ const AdConfigPanel = () => {
             </select>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-white/50 text-xs">하트 1개당 시청 횟수:</span>
+            <span className="text-white/50 text-xs">{t(language, 'videosPerHeartLabel')}</span>
             <select
               value={adConfig.videosPerHeart}
               onChange={(e) => setAdConfig({ videosPerHeart: Number(e.target.value) })}
               className="bg-black/30 text-white rounded px-2 py-1 text-xs"
             >
-              <option value={1}>1회 (테스트용)</option>
-              <option value={2}>2회</option>
-              <option value={3}>3회 (추천)</option>
-              <option value={4}>4회 (기본)</option>
-              <option value={5}>5회 (수익 최적화)</option>
+              <option value={1}>{t(language, 'videosCount1')}</option>
+              <option value={2}>{t(language, 'videosCount2')}</option>
+              <option value={3}>{t(language, 'videosCount3')}</option>
+              <option value={4}>{t(language, 'videosCount4')}</option>
+              <option value={5}>{t(language, 'videosCount5')}</option>
             </select>
           </div>
         </div>
       )}
 
       <Toggle
-        label="📋 참여형 광고 (Offerwall)"
-        enabled={adConfig.offerwall}
-        onToggle={() => setAdConfig({ offerwall: !adConfig.offerwall })}
-      />
-      {adConfig.offerwall && (
-        <div className="flex items-center gap-2 pl-4 pb-2">
-          <span className="text-white/50 text-xs">참여 보상:</span>
-          <select
-            value={adConfig.offerwallRewardHearts}
-            onChange={(e) => setAdConfig({ offerwallRewardHearts: Number(e.target.value) })}
-            className="bg-black/30 text-white rounded px-2 py-1 text-xs"
-          >
-            <option value={1}>+1 ❤️</option>
-            <option value={2}>+2 ❤️</option>
-            <option value={3}>+3 ❤️</option>
-          </select>
-        </div>
-      )}
-
-      <Toggle
-        label="📺 전면 광고 (Interstitial)"
+        label={t(language, 'interstitialToggle')}
         enabled={adConfig.interstitial}
         onToggle={() => setAdConfig({ interstitial: !adConfig.interstitial })}
       />
 
       <div className="pt-2 border-t border-white/10">
-        <p className="text-white/40 text-[10px]">* 실제 광고 SDK 연동 전까지는 시뮬레이션 모드로 동작합니다.</p>
-        <p className="text-white/40 text-[10px]">* 긴 동영상 + 참여형 = 높은 CPM (단가)</p>
+        <p className="text-white/40 text-[10px]">{t(language, 'applixirRewardFlowTip')}</p>
+      </div>
+    </div>
+  );
+};
+
+// Random algorithm admin panel
+// 앱 전체의 난수 생성 로직을 관리자가 실시간으로 조정할 수 있는 통합 패널.
+// 리그 봇 성능, 리그 크기, 총 리그 수 표시, 추월 타이밍, 게스트 쇼케이스 기록,
+// 활동 티커 기록 범위, 피드 갱신 항목 수 등 모든 핵심 파라미터를 제어합니다.
+const RandomAlgorithmPanel = () => {
+  const { randConfig, setRandConfig, language } = useStore();
+  const [draft, setDraft] = React.useState(randConfig);
+  const [saved, setSaved] = React.useState(false);
+  const [activeSection, setActiveSection] = React.useState<string | null>('BOT');
+
+  // Sync draft if external change
+  React.useEffect(() => { setDraft(randConfig); }, [randConfig]);
+
+  const patch = (partial: Partial<typeof draft>) => setDraft(prev => ({ ...prev, ...partial }));
+
+  const handleSave = () => {
+    setRandConfig(draft);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    vibrate();
+  };
+
+  const handleReset = () => {
+    const defaults = {
+      botTimeMean: 50000, botTimeStdDev: 15000,
+      leagueSizeMin: 60, leagueSizeMax: 99,
+      totalLeaguesMean: 3624, totalLeaguesStdDev: 15,
+      overtakeGapMin: 100, overtakeGapMax: 500,
+      showcaseTimeMean: 8000, showcaseTimeStdDev: 2000,
+      tickerTimeMin: 24.0, tickerTimeMax: 42.0,
+      feedBatchSize: 3, totalLeaguesFloor: 3500,
+    };
+    setDraft(defaults as typeof draft);
+    vibrate();
+  };
+
+  // Gaussian bell curve mini preview via CSS gradient
+  const bellWidth = (std: number, maxStd: number) => Math.max(15, Math.min(95, (std / maxStd) * 95));
+
+  const SectionHeader = ({ id, icon, label, sub }: { id: string; icon: string; label: string; sub: string }) => (
+    <button
+      onClick={() => { vibrate(); setActiveSection(prev => prev === id ? null : id); }}
+      className="w-full flex items-center justify-between py-2 text-left"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-lg">{icon}</span>
+        <div>
+          <p className="text-white font-semibold text-sm">{label}</p>
+          <p className="text-white/40 text-[10px]">{sub}</p>
+        </div>
+      </div>
+      <span className="text-white/40 text-xs">{activeSection === id ? '▲' : '▼'}</span>
+    </button>
+  );
+
+  const FieldRow = ({ label, unit, value, min, max, step, onChange, desc }: {
+    label: string; unit: string; value: number; min: number; max: number; step: number;
+    onChange: (v: number) => void; desc?: string;
+  }) => (
+    <div className="mb-3">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-white/70 text-xs">{label}</span>
+        <div className="flex items-center gap-1">
+          <input
+            type="number" min={min} max={max} step={step} value={value}
+            onChange={e => onChange(Number(e.target.value))}
+            className="w-20 bg-black/40 border border-white/20 text-white text-xs rounded px-2 py-1 outline-none focus:border-[#00FFFF] text-right"
+          />
+          <span className="text-white/40 text-[10px]">{unit}</span>
+        </div>
+      </div>
+      <input
+        type="range" min={min} max={max} step={step} value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        className="w-full h-1.5 rounded-full accent-[#00FFFF] cursor-pointer"
+      />
+      {desc && <p className="text-white/25 text-[9px] mt-0.5 leading-tight">{desc}</p>}
+    </div>
+  );
+
+  const GaussianPreview = ({ mean, std, unit, minVal, maxVal }: { mean: number; std: number; unit: string; minVal: number; maxVal: number }) => {
+    const range = maxVal - minVal;
+    const meanPct = ((mean - minVal) / range) * 100;
+    const stdPct = (std / range) * 100;
+    const left = Math.max(0, meanPct - stdPct);
+    const right = Math.max(0, 100 - (meanPct + stdPct));
+    return (
+      <div className="mt-2 mb-4">
+        <div className="flex justify-between text-[9px] text-white/30 mb-1">
+          <span>{(minVal).toFixed(0)}{unit}</span>
+          <span className="text-[#00FFFF]">μ={mean}{unit} σ={std}{unit}</span>
+          <span>{(maxVal).toFixed(0)}{unit}</span>
+        </div>
+        <div className="relative h-6 bg-white/5 rounded-full overflow-hidden">
+          <div
+            className="absolute inset-y-0 bg-gradient-to-r from-transparent via-[#00FFFF]/40 to-transparent rounded-full transition-all duration-300"
+            style={{ left: `${left}%`, right: `${Math.max(0, right)}%` }}
+          />
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-[#FF0080]"
+            style={{ left: `${Math.max(1, Math.min(99, meanPct))}%` }}
+          />
+        </div>
+        <p className="text-white/30 text-[9px] mt-0.5 text-center">{t(language, 'bellCurveDesc')}</p>
+      </div>
+    );
+  };
+
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(randConfig);
+
+  return (
+    <div className="bg-[#1A0B2E] rounded-xl p-4 border border-[#00FFFF]/20 space-y-1">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[#FF0080]">🎲</span>
+          <div>
+            <p className="text-white font-bold text-sm">{t(language, 'randomAlgorithmTitle')}</p>
+            <p className="text-white/40 text-[10px]">{t(language, 'randomAlgorithmDesc')}</p>
+          </div>
+        </div>
+        <div className="flex gap-1.5">
+          <button onClick={handleReset} className="text-[10px] text-white/40 border border-white/10 rounded px-2 py-1 hover:text-white btn-squishy">{t(language, 'resetBtn')}</button>
+          <button
+            onClick={handleSave}
+            className={`text-[10px] font-bold rounded px-3 py-1 btn-squishy transition-all ${saved ? 'bg-green-500/30 text-green-400 border border-green-500/40' : isDirty ? 'bg-[#00FFFF]/20 text-[#00FFFF] border border-[#00FFFF]/40 animate-pulse' : 'bg-white/5 text-white/30 border border-white/10'}`}
+          >
+            {saved ? t(language, 'savedToast') : isDirty ? t(language, 'applyBtnStore') : t(language, 'savedToast').replace(/^✓\s*/, '')}
+          </button>
+        </div>
+      </div>
+
+      {isDirty && (
+        <div className="text-[10px] text-yellow-400/80 bg-yellow-500/10 border border-yellow-500/20 rounded px-2 py-1 mb-2">
+          {t(language, 'unsavedChanges')}
+        </div>
+      )}
+
+      {/* Section 1: Bot performance distribution */}
+      <div className="border-b border-white/10 pb-2">
+        <SectionHeader id="BOT" icon="🤖" label={t(language, 'botPerformanceDist')} sub={t(language, 'botPerformanceDistDesc')} />
+        {activeSection === 'BOT' && (
+          <div className="pt-2">
+            <GaussianPreview mean={Math.round(draft.botTimeMean / 1000)} std={Math.round(draft.botTimeStdDev / 1000)} unit="s" minVal={5} maxVal={180} />
+            <FieldRow
+              label={t(language, 'meanTimeGaussian')} unit="ms"
+              value={draft.botTimeMean} min={5000} max={180000} step={1000}
+              onChange={v => patch({ botTimeMean: v })}
+              desc={t(language, 'meanTimeGaussianDesc')}
+            />
+            <FieldRow
+              label={t(language, 'stdDevGaussian')} unit="ms"
+              value={draft.botTimeStdDev} min={500} max={60000} step={500}
+              onChange={v => patch({ botTimeStdDev: v })}
+              desc={t(language, 'stdDevGaussianDesc')}
+            />
+            <div className="text-[10px] text-white/30 bg-black/20 rounded p-2 mt-1">
+              <p>{t(language, 'hardCapDesc')}</p>
+              <p>{t(language, 'competitionIntensity', { min: String(Math.max(5, Math.round((draft.botTimeMean - 2 * draft.botTimeStdDev) / 100) / 10)), max: String(Math.round((draft.botTimeMean + 2 * draft.botTimeStdDev) / 100) / 10) })}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 2: League size */}
+      <div className="border-b border-white/10 pb-2">
+        <SectionHeader id="LEAGUE_SIZE" icon="👥" label={t(language, 'leagueSizeRange')} sub={t(language, 'leagueSizeRangeDesc')} />
+        {activeSection === 'LEAGUE_SIZE' && (
+          <div className="pt-2">
+            <FieldRow
+              label="최소 인원 (Min Players)" unit="명"
+              value={draft.leagueSizeMin} min={10} max={98} step={1}
+              onChange={v => patch({ leagueSizeMin: Math.min(v, draft.leagueSizeMax - 1) })}
+              desc="이 수 이상의 합성 플레이어가 항상 배정됩니다. 너무 낮으면 과소 경쟁, 너무 높으면 밀집 경쟁이 됩니다."
+            />
+            <FieldRow
+              label="최대 인원 (Max Players)" unit="명"
+              value={draft.leagueSizeMax} min={draft.leagueSizeMin + 1} max={200} step={1}
+              onChange={v => patch({ leagueSizeMax: Math.max(v, draft.leagueSizeMin + 1) })}
+              desc="해시 기반으로 사용자마다 고정 인원이 배정됩니다. 새로고침해도 구성원 수는 바뀌지 않습니다."
+            />
+            <div className="text-[10px] text-white/30 bg-black/20 rounded p-2 mt-1">
+              <p>{t(language, 'currentRangeDesc', { min: String(draft.leagueSizeMin), max: String(draft.leagueSizeMax), count: String(draft.leagueSizeMax - draft.leagueSizeMin + 1) })}</p>
+              <p>{t(language, 'baselineDesc')}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: Total leagues display */}
+      <div className="border-b border-white/10 pb-2">
+        <SectionHeader id="TOTAL_LEAGUES" icon="🌐" label={t(language, 'totalLeaguesCounter')} sub={t(language, 'totalLeaguesCounterDesc')} />
+        {activeSection === 'TOTAL_LEAGUES' && (
+          <div className="pt-2">
+            <GaussianPreview mean={draft.totalLeaguesMean} std={draft.totalLeaguesStdDev} unit="" minVal={draft.totalLeaguesMean - 100} maxVal={draft.totalLeaguesMean + 100} />
+            <FieldRow
+              label="평균 리그 수 μ" unit="개"
+              value={draft.totalLeaguesMean} min={100} max={99999} step={100}
+              onChange={v => patch({ totalLeaguesMean: v })}
+              desc="UI에 표시되는 '전 세계 X개 리그' 숫자의 평균값입니다. 높을수록 규모감이 커집니다."
+            />
+            <FieldRow
+              label="표준편차 σ" unit="개"
+              value={draft.totalLeaguesStdDev} min={1} max={500} step={5}
+              onChange={v => patch({ totalLeaguesStdDev: v })}
+              desc="접속할 때마다 보이는 숫자에 랜덤 변동을 줍니다. 너무 크면 신뢰를 해칠 수 있습니다."
+            />
+            <FieldRow
+              label="최소 표시 하한선 (Floor)" unit="개"
+              value={draft.totalLeaguesFloor} min={100} max={draft.totalLeaguesMean} step={100}
+              onChange={v => patch({ totalLeaguesFloor: v })}
+              desc="분포 하단에서도 최소 이 숫자 이상은 표시됩니다. 너무 적어 보이는 인상을 막습니다."
+            />
+            <div className="text-[10px] text-white/30 bg-black/20 rounded p-2 mt-1">
+              <p>{t(language, 'expectedRangeDesc', { min: String(Math.max(draft.totalLeaguesFloor, draft.totalLeaguesMean - 2 * draft.totalLeaguesStdDev)), max: String(draft.totalLeaguesMean + 2 * draft.totalLeaguesStdDev) })}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 4: Overtake timing */}
+      <div className="border-b border-white/10 pb-2">
+        <SectionHeader id="OVERTAKE" icon="🏁" label={t(language, 'botOvertakeTiming')} sub={t(language, 'botOvertakeTimingDesc')} />
+        {activeSection === 'OVERTAKE' && (
+          <div className="pt-2">
+            <FieldRow
+              label="추월 간격 최솟값" unit="ms"
+              value={draft.overtakeGapMin} min={10} max={draft.overtakeGapMax - 10} step={10}
+              onChange={v => patch({ overtakeGapMin: Math.min(v, draft.overtakeGapMax - 10) })}
+              desc="봇이 유저보다 최소 이만큼 앞서며 1위를 빼앗는 간격입니다."
+            />
+            <FieldRow
+              label="추월 간격 최댓값" unit="ms"
+              value={draft.overtakeGapMax} min={draft.overtakeGapMin + 10} max={10000} step={50}
+              onChange={v => patch({ overtakeGapMax: Math.max(v, draft.overtakeGapMin + 10) })}
+              desc="봇이 최대 이만큼까지 앞서며 추월합니다. 너무 크면 박탈감이 커질 수 있습니다."
+            />
+            <div className="text-[10px] text-white/30 bg-black/20 rounded p-2 mt-1">
+              <p>{t(language, 'overtakeGapUniformDesc', { min: String(draft.overtakeGapMin), max: String(draft.overtakeGapMax) })}</p>
+              <p>{t(language, 'timeConversionDesc', { min: (draft.overtakeGapMin / 1000).toFixed(2), max: (draft.overtakeGapMax / 1000).toFixed(2) })}</p>
+              <p>{t(language, 'overtakeTargetDesc')}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 5: Guest showcase */}
+      <div className="border-b border-white/10 pb-2">
+        <SectionHeader id="SHOWCASE" icon="🎪" label={t(language, 'guestShowcaseWinners')} sub={t(language, 'guestShowcaseWinnersDesc')} />
+        {activeSection === 'SHOWCASE' && (
+          <div className="pt-2">
+            <GaussianPreview mean={Math.round((draft.showcaseTimeMean + 4000) / 100) / 10} std={Math.round(draft.showcaseTimeStdDev / 100) / 10} unit="s" minVal={5} maxVal={30} />
+            <FieldRow
+              label="기본 오프셋 (Base Offset)" unit="ms"
+              value={draft.showcaseTimeMean} min={3000} max={60000} step={500}
+              onChange={v => patch({ showcaseTimeMean: v })}
+              desc="게스트 쇼케이스 우승 기록의 기준 오프셋입니다. 실제 평균은 offset + 4000ms입니다."
+            />
+            <FieldRow
+              label="분포 표준편차 σ" unit="ms"
+              value={draft.showcaseTimeStdDev} min={100} max={10000} step={100}
+              onChange={v => patch({ showcaseTimeStdDev: v })}
+              desc="게스트 쇼케이스 기록의 퍼짐 정도입니다. 높을수록 실력 분산이 커 보입니다."
+            />
+            <div className="text-[10px] text-white/30 bg-black/20 rounded p-2 mt-1">
+              <p>{t(language, 'expectedShowcaseRange', { min: String(((draft.showcaseTimeMean + 4000 - 2 * draft.showcaseTimeStdDev) / 1000).toFixed(1)), max: String(((draft.showcaseTimeMean + 4000 + 2 * draft.showcaseTimeStdDev) / 1000).toFixed(1)) })}</p>
+              <p>{t(language, 'showcaseLogicDesc')}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 6: Live ticker times */}
+      <div className="border-b border-white/10 pb-2">
+        <SectionHeader id="TICKER" icon="📢" label={t(language, 'liveTickerRange')} sub={t(language, 'liveTickerRangeDesc')} />
+        {activeSection === 'TICKER' && (
+          <div className="pt-2">
+            <FieldRow
+              label="최소 기록 (가장 빠름)" unit="초"
+              value={draft.tickerTimeMin} min={5} max={draft.tickerTimeMax - 0.5} step={0.5}
+              onChange={v => patch({ tickerTimeMin: Math.min(v, draft.tickerTimeMax - 0.5) })}
+              desc="티커에 표시되는 가장 빠른 가상 기록입니다. 너무 빠르면 현실감이 떨어집니다."
+            />
+            <FieldRow
+              label="최대 기록 (가장 느림)" unit="초"
+              value={draft.tickerTimeMax} min={draft.tickerTimeMin + 0.5} max={300} step={0.5}
+              onChange={v => patch({ tickerTimeMax: Math.max(v, draft.tickerTimeMin + 0.5) })}
+              desc="티커에 표시되는 가장 느린 가상 기록입니다. 범위가 넓을수록 다양한 실력대가 있는 것처럼 보입니다."
+            />
+            <div className="text-[10px] text-white/30 bg-black/20 rounded p-2 mt-1">
+              <p>{t(language, 'tickerRangeUniform', { min: String(draft.tickerTimeMin), max: String(draft.tickerTimeMax) })}</p>
+              <p>{t(language, 'tickerFormatDesc')}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 7: Activity feed */}
+      <div className="border-b border-white/10 pb-2">
+        <SectionHeader id="FEED" icon="🔔" label={t(language, 'activityFeedBatchSize')} sub={t(language, 'activityFeedBatchSizeDesc')} />
+        {activeSection === 'FEED' && (
+          <div className="pt-2">
+            <FieldRow
+              label="갱신당 생성 항목 수" unit="개"
+              value={draft.feedBatchSize} min={1} max={10} step={1}
+              onChange={v => patch({ feedBatchSize: v })}
+              desc="Activity Feed가 갱신될 때 한 번에 생성하는 항목 수입니다. 높을수록 피드가 더 빠르게 도는 인상을 줍니다."
+            />
+            <div className="text-[10px] text-white/30 bg-black/20 rounded p-2 mt-1">
+              <p>{t(language, 'feedFormatDesc')}</p>
+              <p>{t(language, 'feedLastItemDesc')}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 8: Live curve comparator */}
+      <div>
+        <SectionHeader id="COMPARE" icon="📊" label={t(language, 'distributionComparator')} sub={t(language, 'distributionComparatorDesc')} />
+        {activeSection === 'COMPARE' && (
+          <div className="pt-2 space-y-3">
+            {[
+              { label: 'Bot Time', mean: draft.botTimeMean / 1000, std: draft.botTimeStdDev / 1000, unit: 's', min: 5, max: 180 },
+              { label: 'Total Leagues', mean: draft.totalLeaguesMean, std: draft.totalLeaguesStdDev, unit: '', min: draft.totalLeaguesMean - 200, max: draft.totalLeaguesMean + 200 },
+              { label: 'Showcase', mean: (draft.showcaseTimeMean + 4000) / 1000, std: draft.showcaseTimeStdDev / 1000, unit: 's', min: 3, max: 25 },
+            ].map(({ label, mean, std, unit, min, max }) => (
+              <div key={label}>
+                <p className="text-white/50 text-[10px] mb-1">{label}</p>
+                <GaussianPreview mean={Math.round(mean * 10) / 10} std={Math.round(std * 10) / 10} unit={unit} minVal={min} maxVal={max} />
+              </div>
+            ))}
+            <div className="text-[10px] text-white/30 bg-black/20 rounded p-2">
+              <p>• League Size: {draft.leagueSizeMin}~{draft.leagueSizeMax} players (hash-deterministic)</p>
+              <p>• Overtake Gap: {draft.overtakeGapMin}~{draft.overtakeGapMax}ms (uniform)</p>
+              <p>• Ticker: {draft.tickerTimeMin}~{draft.tickerTimeMax}s (uniform)</p>
+              <p>• Feed batch: {draft.feedBatchSize} items/refresh</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1419,7 +2456,8 @@ const MetricCard = ({ label, value, icon, color }: { label: string; value: strin
   </div>
 );
 
-// ─── Language Modal ───────────────────────────────────────────────
+
+// Language modal
 const LanguageModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
   const { setLanguage, language } = useStore();
   return (
@@ -1440,55 +2478,135 @@ const LanguageModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
   );
 };
 
-// ─── Hearts Modal ─────────────────────────────────────────────────
+// Quiz modal (anti-bot)
+const QuizModal = ({ isOpen, onClose, onSolve }: { isOpen: boolean; onClose: () => void; onSolve: () => void }) => {
+  const { language, currentUser } = useStore();
+  const [num1] = useState(Math.floor(Math.random() * 10) + 1);
+  const [num2] = useState(Math.floor(Math.random() * 10) + 1);
+  const [answer, setAnswer] = useState('');
+  const [error, setError] = useState(false);
+
+  const isAdmin = currentUser?.role === 'ADMIN';
+
+  const handleSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (parseInt(answer) === num1 + num2) {
+      vibrate();
+      onSolve();
+    } else {
+      setError(true);
+      vibrate();
+      setTimeout(() => setError(false), 500);
+    }
+  };
+
+  const handleAdminSolve = () => {
+    vibrate();
+    onSolve();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={t(language, 'verificationTitle')}>
+      <div className="space-y-4 py-2">
+        <p className="text-white/70 text-sm text-center">{t(language, 'areYouHuman')}</p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="bg-black/40 rounded-2xl p-6 border border-white/10 text-center">
+            <span className="text-3xl font-black text-white">{num1} + {num2} = ?</span>
+          </div>
+          <input
+            autoFocus
+            type="number"
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
+            className={`w-full bg-white/5 border ${error ? 'border-red-500 animate-shake' : 'border-white/20'} text-white text-2xl font-black text-center py-4 rounded-xl outline-none focus:border-[#00FFFF] transition-all`}
+            placeholder="?"
+          />
+          <button
+            type="submit"
+            className="w-full bg-[#FF0080] text-white font-bold py-4 rounded-xl btn-squishy shadow-[0_0_20px_rgba(255,0,128,0.3)]"
+          >
+            {t(language, 'verifyBtn')}
+          </button>
+        </form>
+
+        {isAdmin && (
+          <button
+            onClick={handleAdminSolve}
+            className="w-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 font-bold py-3 rounded-xl btn-squishy flex items-center justify-center gap-2"
+          >
+            <span>⚡</span> {t(language, 'adminAutoSolve')}
+          </button>
+        )}
+      </div>
+    </Modal>
+  );
+};
+
+// Hearts modal
 const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
   const {
-    addHeart, claimDailyHeart, language, getReferralLink,
-    adConfig, watchRewardedAd, getOfferUrls, videoWatchCount
+    currentUser, claimDailyHeart, language, getReferralLink, showRewardToast,
+    adConfig, watchRewardedAd, videoWatchCount, activeFandomId
   } = useStore();
-  const [seconds, setSeconds] = useState(3 * 60 * 60);
+  const [seconds, setSeconds] = useState(() => Math.floor(getMsUntilNextUtcMidnight() / 1000));
   const [linkCopied, setLinkCopied] = useState(false);
-  const [showIframe, setShowIframe] = useState(false);
-  const [iframeUrl, setIframeUrl] = useState('');
-  const [iframeType, setIframeType] = useState<'video' | 'offerwall' | null>(null);
+  const [adLoading, setAdLoading] = useState(false);
+  const [showQuiz, setShowQuiz] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
-    const timer = setInterval(() => setSeconds((prev) => Math.max(prev - 1, 0)), 1000);
+    const updateCountdown = () => setSeconds(Math.max(0, Math.floor(getMsUntilNextUtcMidnight() / 1000)));
+    updateCountdown();
+    const timer = setInterval(updateCountdown, 1000);
     return () => clearInterval(timer);
   }, [isOpen]);
 
   const hh = String(Math.floor(seconds / 3600)).padStart(2, '0');
   const mm = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
   const ss = String(seconds % 60).padStart(2, '0');
+  const isDailyHeartReady = currentUser ? currentUser.lastDailyHeart !== new Date().toISOString().slice(0, 10) : false;
+  const activeFandom = getFandomPack(activeFandomId);
+
+  const startAdFlow = async () => {
+    setAdLoading(true);
+    // 광고 재생 전에 모달을 닫아서 Applixir 비디오가 전체화면으로 보이게 함
+    // The Applixir SDK injects a video into #applixir_vanishing_div (z-index:99999)
+    // but our Modal has a backdrop - closing it ensures nothing covers the video.
+    onClose();
+    try {
+      const rewardState = await watchRewardedAd();
+      if (rewardState === 'rewarded') {
+        useStore.getState().showRewardToast(t(language, 'heartEarned'));
+      } else if (rewardState === 'progressed') {
+        const { videoWatchCount: nextWatchCount, adConfig: nextAdConfig } = useStore.getState();
+        useStore.getState().showRewardToast(t(language, 'videoProgress', {
+          current: String(Math.min(nextWatchCount, nextAdConfig.videosPerHeart)),
+          total: String(nextAdConfig.videosPerHeart),
+          reward: String(nextAdConfig.rewardedVideoRewardHearts),
+        }));
+      }
+    } catch (err) {
+      console.error('[HeartsModal] Ad error:', err);
+    } finally {
+      setAdLoading(false);
+    }
+  };
 
   const handleWatchAd = () => {
     vibrate();
-    const urls = getOfferUrls();
-    setIframeUrl(urls.video);
-    setIframeType('video');
-    setShowIframe(true);
-  };
-
-  const handleOfferwall = () => {
-    vibrate();
-    const urls = getOfferUrls();
-    setIframeUrl(urls.offerwall);
-    setIframeType('offerwall');
-    setShowIframe(true);
-  };
-
-  const handleCloseIframe = async () => {
-    if (iframeType === 'video') {
-      // For video, we increment watch count when iframe closes
-      // (Simplified: in production, one would use postMessage or API check)
-      const earned = await watchRewardedAd();
-      if (earned) {
-        onClose(); // Close the modal if heart was granted
-      }
+    // 20% chance to show anti-bot quiz
+    if (Math.random() < 0.2) {
+      setShowQuiz(true);
+    } else {
+      startAdFlow();
     }
-    setShowIframe(false);
-    setIframeType(null);
+  };
+
+  const handleQuizSolve = () => {
+    setShowQuiz(false);
+    startAdFlow();
   };
 
   const handleInvite = async () => {
@@ -1496,85 +2614,96 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
     const link = getReferralLink();
     try {
       if (navigator.share) {
-        await navigator.share({ title: 'StanBeat', text: 'Can you beat my record? Play StanBeat!', url: link });
-      } else if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(link);
+        await navigator.share({
+          title: t(language, 'shareInviteTitleFandom', { fandom: activeFandom.targetLabel }),
+          text: t(language, 'shareInviteTextFandom', { challenge: activeFandom.shareTitle }),
+          url: link,
+        });
+      } else if (await copyTextToClipboard(link)) {
         setLinkCopied(true);
         setTimeout(() => setLinkCopied(false), 2000);
+        showRewardToast(t(language, 'inviteShareCopied'));
       } else {
-        window.prompt('Copy this invite link:', link);
+        showRewardToast(t(language, 'copyFailed'));
       }
-    } catch { }
+    } catch {
+      showRewardToast(t(language, 'copyFailed'));
+    }
   };
 
-  if (showIframe) {
-    return (
-      <Modal isOpen={isOpen} onClose={handleCloseIframe} title={iframeType === 'video' ? '📺 Video Ad' : '📋 Mission Wall'}>
-        <div className="w-full aspect-[9/16] max-h-[70vh] relative bg-black rounded-lg overflow-hidden border border-white/20">
-          <iframe
-            src={iframeUrl}
-            className="w-full h-full border-none"
-            title="Adscend Media"
-            sandbox="allow-scripts allow-same-origin allow-popups"
-            allow="autoplay"
-          />
-        </div>
-        <p className="text-white/40 text-[10px] mt-2 text-center">
-          {iframeType === 'video'
-            ? t(language, 'adVideoHint')
-            : t(language, 'adMissionHint')}
-        </p>
-      </Modal>
-    );
-  }
+  const handleClaimDailyHeart = async () => {
+    vibrate();
+    try {
+      const claimed = await claimDailyHeart();
+      showRewardToast(t(language, claimed ? 'dailyHeartClaimed' : 'dailyHeartAlreadyClaimed'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t(language, 'serverTimeError');
+      showRewardToast(message);
+    }
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={t(language, 'heartsTitle')}>
       <div className="space-y-3">
-        <p className="text-white/70 text-xs">{t(language, 'nextHeart')}: {hh}:{mm}:{ss}</p>
+        <p className="text-white/70 text-xs">
+          {isDailyHeartReady
+            ? t(language, 'dailyHeartReady')
+            : t(language, 'dailyHeartCountdown', { time: `${hh}:${mm}:${ss}` })}
+        </p>
 
         {adConfig.rewardedVideo && (
           <div className="space-y-1">
-            <button onClick={handleWatchAd} className="w-full rounded-xl p-3 bg-[#00FFFF] text-black font-bold flex items-center justify-center gap-2 btn-squishy">
-              <Video size={18} /> {t(language, 'watchAd')}
+            <button
+              onClick={handleWatchAd}
+              disabled={adLoading}
+              className="w-full rounded-xl p-3 bg-[#00FFFF] text-black font-bold flex items-center justify-center gap-2 btn-squishy disabled:opacity-50"
+            >
+              {adLoading ? (
+                <span className="inline-block w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Video size={18} />
+              )}
+              {adLoading
+                ? t(language, 'loadingAd')
+                : t(language, 'watchAd')}
             </button>
             <div className="flex flex-col items-center">
-              <div className="w-full bg-white/5 rounded-full h-1.5 overflow-hidden max-w-[80%]">
-                <div
-                  className="h-full bg-[#00FFFF] transition-all duration-300"
-                  style={{ width: `${(videoWatchCount / adConfig.videosPerHeart) * 100}%` }}
-                />
-              </div>
-              <p className="text-[10px] text-white/50 mt-1">
-                {t(language, 'videoProgress', { current: String(videoWatchCount), total: String(adConfig.videosPerHeart), reward: String(adConfig.rewardedVideoRewardHearts) })}
+              <p className="text-[12px] text-[#00FFFF] mt-1 font-semibold">
+                {t(language, 'videoProgress', {
+                  current: String(Math.min(videoWatchCount, adConfig.videosPerHeart)),
+                  total: String(adConfig.videosPerHeart),
+                  reward: String(adConfig.rewardedVideoRewardHearts),
+                })}
               </p>
             </div>
           </div>
-        )}
 
-        {adConfig.offerwall && (
-          <button onClick={handleOfferwall} className="w-full rounded-xl p-3 bg-gradient-to-r from-purple-600 to-pink-500 text-white font-bold flex items-center justify-center gap-2 btn-squishy">
-            {t(language, 'offerwallButton', { reward: String(adConfig.offerwallRewardHearts) })}
-          </button>
         )}
 
         <button onClick={handleInvite} className="w-full rounded-xl p-3 bg-[#FF0080] text-white font-bold flex items-center justify-center gap-2 btn-squishy">
           <Share2 size={18} /> {linkCopied ? t(language, 'linkCopied') : t(language, 'inviteFriend')}
         </button>
 
-        <button onClick={() => { vibrate(); claimDailyHeart(); }} className="w-full rounded-xl p-3 bg-white/10 text-white text-sm btn-squishy">
+        <button onClick={handleClaimDailyHeart} className="w-full rounded-xl p-3 bg-white/10 text-white text-sm btn-squishy">
           {t(language, 'dailyHeart')}
         </button>
 
         <p className="text-[11px] text-white/50">{t(language, 'missionGet')}</p>
         <p className="text-[11px] text-white/50">{t(language, 'maxHearts')}</p>
       </div>
+
+      <QuizModal
+        isOpen={showQuiz}
+        onClose={() => setShowQuiz(false)}
+        onSolve={handleQuizSolve}
+      />
     </Modal>
   );
 };
 
-// ─── Offline Toast ────────────────────────────────────────────────
+// Offline toast
 const OfflineToast = () => {
+  const { language } = useStore();
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -1592,7 +2721,7 @@ const OfflineToast = () => {
   return (
     <div className="fixed top-safe z-[3000] w-full flex justify-center py-2 animate-slide-down pointer-events-none">
       <div className="bg-red-500 text-white px-4 py-2 rounded-full font-bold shadow-[0_0_15px_rgba(239,68,68,0.5)] flex items-center gap-2 text-sm border-2 border-red-400">
-        <span>⚠️ No Internet Connection</span>
+        <span>{t(language, 'noInternet')}</span>
       </div>
     </div>
   );
@@ -1602,21 +2731,46 @@ const OfflineToast = () => {
 // 전체 앱의 상태(라우팅/뷰)를 관리하고, 언어 자동 감지,
 // 하트 충전 모달, 모바일 레이아웃(하단 정보) 등을 통합 렌더링합니다.
 export default function App() {
-  const { currentView, language, currentUser, initAdscendListener, setLanguage, showBrowserBlocker, setShowBrowserBlocker } = useStore();
+  const {
+    currentView,
+    language,
+    currentUser,
+    setLanguage,
+    showBrowserBlocker,
+    setShowBrowserBlocker,
+    rewardMessage,
+    alertDialog,
+    confirmDialog,
+    showAlertDialog,
+    showConfirmDialog,
+    hydrateOperationalState,
+    syncSeasonClock,
+    initLeague,
+    showRewardToast,
+    claimPendingAdReward,
+  } = useStore();
   const [showLanguageModal, setShowLanguageModal] = useState(false);
   const [showHeartsModal, setShowHeartsModal] = useState(false);
 
   // Global BeforeInstallPrompt listener
   useEffect(() => {
-    const handler = (e: any) => {
+    const handler = (e: Event) => {
       e.preventDefault();
-      useStore.setState({ deferredPrompt: e });
+      useStore.setState({ deferredPrompt: e as DeferredInstallPrompt });
     };
     window.addEventListener('beforeinstallprompt', handler);
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
   // IP 기반 언어 자동 감지
+  useEffect(() => {
+    if (language === 'ar') {
+      document.documentElement.setAttribute('dir', 'rtl');
+    } else {
+      document.documentElement.removeAttribute('dir');
+    }
+  }, [language]);
+
   useEffect(() => {
     let cancelled = false;
     let saved: string | null = null;
@@ -1637,17 +2791,55 @@ export default function App() {
     };
   }, [setLanguage]);
 
+  useEffect(() => {
+    void hydrateOperationalState();
+  }, [hydrateOperationalState]);
+
+  useEffect(() => {
+    if (!runtimeConfig.capabilities.login) return undefined;
+    return onAuthStateChanged((authUser) => {
+      const state = useStore.getState();
+      if (!authUser) {
+        if (state.currentUser) {
+          state.logout();
+        }
+        return;
+      }
+      void state.restoreSessionFromAuth(authUser);
+    });
+  }, []);
+
+  useEffect(() => {
+    syncSeasonClock();
+    initLeague();
+    const timer = setInterval(() => {
+      syncSeasonClock();
+      initLeague();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [syncSeasonClock, initLeague]);
+
   // Initialize ad rewards listener when logged in
   useEffect(() => {
-    if (currentUser) {
-      initAdscendListener();
-    }
-  }, [currentUser, initAdscendListener]);
+    if (!currentUser?.id) return;
+
+    return listenForApplixirRewards(currentUser.id, async (reward) => {
+      if (reward.type === 'rewarded_video_applixir' && isRewardedVideoWaitActive(currentUser.id)) {
+        return;
+      }
+      const { language: currentLanguage } = useStore.getState();
+      const rewardResult = await claimPendingAdReward(reward.id);
+      if (rewardResult.grantedHearts > 0) {
+        showRewardToast(t(currentLanguage, 'heartEarned'));
+      }
+    });
+  }, [claimPendingAdReward, currentUser?.id, showRewardToast]);
 
   // Handle browser back button (popstate mapping to SetView)
   useEffect(() => {
+    type BrowserHistoryState = { view?: 'HOME' | 'GAME' | 'LEADERBOARD' | 'ADMIN' | 'HISTORY' };
     const handlePopState = (e: PopStateEvent) => {
-      const state = e.state as { view?: any };
+      const state = e.state as BrowserHistoryState | null;
       if (state && state.view) {
         useStore.setState({ currentView: state.view });
       } else {
@@ -1661,6 +2853,14 @@ export default function App() {
   return (
     <Layout onOpenLanguage={() => setShowLanguageModal(true)} onOpenHearts={() => setShowHeartsModal(true)}>
       <OfflineToast />
+      {rewardMessage && (
+        <div className="fixed top-safe z-[4000] w-full flex justify-center py-2 animate-slide-down pointer-events-none">
+          <div className="bg-[#FF0080] text-white px-6 py-3 rounded-full font-bold shadow-[0_0_20px_rgba(255,0,128,0.6)] flex items-center gap-2 border-2 border-[#FF0080]/50 text-sm">
+            <span>🎁</span>
+            <span>{rewardMessage}</span>
+          </div>
+        </div>
+      )}
       {currentView === 'HOME' && <HomeScreen onShowHearts={() => setShowHeartsModal(true)} />}
       {currentView === 'GAME' && <GameScreen onShowHearts={() => setShowHeartsModal(true)} />}
       {currentView === 'LEADERBOARD' && <LeaderboardScreen onShowHearts={() => setShowHeartsModal(true)} />}
@@ -1670,18 +2870,95 @@ export default function App() {
       <LanguageModal isOpen={showLanguageModal} onClose={() => setShowLanguageModal(false)} />
       <HeartsModal isOpen={showHeartsModal} onClose={() => setShowHeartsModal(false)} />
 
+      <Modal
+        isOpen={Boolean(alertDialog)}
+        onClose={() => showAlertDialog(null)}
+        title={alertDialog?.title ?? ''}
+      >
+        <div className="space-y-4">
+          <p className={`text-sm text-center ${alertDialog?.tone === 'error' ? 'text-red-300' : alertDialog?.tone === 'warning' ? 'text-yellow-200' : 'text-white/80'}`}>
+            {alertDialog?.message}
+          </p>
+          <button
+            onClick={() => {
+              vibrate();
+              showAlertDialog(null);
+            }}
+            className="w-full bg-[#FF0080] text-white font-bold py-3 rounded-lg btn-squishy"
+          >
+            {t(language, 'closeModal')}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(confirmDialog)}
+        onClose={() => showConfirmDialog(null)}
+        title={confirmDialog?.title ?? ''}
+      >
+        <div className="space-y-4">
+          <p className={`text-sm text-center ${confirmDialog?.tone === 'danger' ? 'text-red-200' : 'text-white/80'}`}>
+            {confirmDialog?.message}
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => {
+                vibrate();
+                showConfirmDialog(null);
+              }}
+              className="flex-1 bg-white/10 text-white font-bold py-3 rounded-lg btn-squishy"
+            >
+              {confirmDialog?.cancelLabel ?? t(language, 'closeModal')}
+            </button>
+            <button
+              onClick={async () => {
+                const callback = confirmDialog?.onConfirm;
+                showConfirmDialog(null);
+                if (!callback) return;
+                vibrate();
+                try {
+                  await callback();
+                } catch (error) {
+                  console.error('[ConfirmDialog] Action failed:', error);
+                  showAlertDialog({
+                    title: t(language, 'adminTitle'),
+                    message: error instanceof Error ? error.message : t(language, 'loginFailed'),
+                    tone: 'error',
+                  });
+                }
+              }}
+              className={`flex-1 font-bold py-3 rounded-lg btn-squishy ${confirmDialog?.tone === 'danger' ? 'bg-red-500 text-white' : 'bg-[#00FFFF] text-black'}`}
+            >
+              {confirmDialog?.confirmLabel ?? t(language, 'save')}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* In-App Browser Blocker Modal */}
-      <Modal isOpen={showBrowserBlocker} onClose={() => setShowBrowserBlocker(false)} title="Browser Not Supported">
-        <p className="text-white/80 text-sm mb-4 text-center">Google Login is blocked in in-app browsers (Instagram, Facebook, etc). Please copy the link and open it in Safari or Chrome.</p>
-        <button onClick={() => { vibrate(); navigator.clipboard.writeText('https://stanbeat.org').then(() => alert('Link copied! Paste in Chrome/Safari.')); }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy text-lg">
-          Copy Link URL
+      <Modal isOpen={showBrowserBlocker} onClose={() => setShowBrowserBlocker(false)} title={t(language, 'browserNotSupported')}>
+        <p className="text-white/80 text-sm mb-4 text-center">{t(language, 'inAppBrowserWarning')}</p>
+        <button onClick={async () => {
+          vibrate();
+          const copied = await copyTextToClipboard(window.location.origin);
+          showRewardToast(copied ? t(language, 'linkCopiedAlert') : t(language, 'copyFailed'));
+        }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy text-lg">
+          {t(language, 'copyLinkUrl')}
         </button>
       </Modal>
 
       {(currentView === 'HOME' || currentView === 'LEADERBOARD') && (
         <footer className="bg-[#050208] p-4 text-center border-t border-white/10 space-y-1">
-          <p className="text-[10px] text-[#4d4d4d] leading-tight">{t(language, 'legal')}</p>
-          <p className="text-[9px] text-[#3a3a3a]">© {new Date().getFullYear()} StanBeat · <a href="mailto:marketing@stanbeat.org" className="underline hover:text-white/40">marketing@stanbeat.org</a></p>
+          <small className="block text-sm text-white/80 leading-relaxed">{t(language, 'legal').replace(/^\*\s*/, '')}</small>
+          <p className="text-xs text-white/75">
+            © {new Date().getFullYear()} StanBeat
+            {runtimeConfig.supportEmail ? (
+              <>
+                {' · '}
+                <a href={`mailto:${runtimeConfig.supportEmail}`} className="underline text-white/90 hover:text-white">{runtimeConfig.supportEmail}</a>
+              </>
+            ) : null}
+          </p>
         </footer>
       )}
     </Layout>

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -6,26 +6,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 
   <!-- Primary Meta Tags -->
-  <title>StanBeat - BTS Word Search Game | Win a Trip to Seoul ✈️</title>
+  <title>StanBeat - K-pop & K-culture Word Search Game | Win a Korea Trip</title>
   <meta name="description"
-    content="Find BTS member names in the fastest time! Compete with ARMY worldwide and win a trip to Seoul. Free K-pop word search game. 방탄소년단 단어찾기 게임" />
+    content="Choose your fandom, find K-pop and K-culture words fast, and compete with fans worldwide for a Korea trip. Free fan word search game." />
   <meta name="keywords"
-    content="BTS, word game, K-pop, ARMY, StanBeat, 방탄소년단, 단어찾기, BTS game, Bangtan, word search, Seoul trip" />
+    content="K-pop, K-culture, word game, fandom, StanBeat, Korean culture, word search, Korea trip, Seoul" />
   <meta name="author" content="StanBeat" />
   <meta name="theme-color" content="#FF0080" />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
-  <link rel="canonical" href="https://stanbeat.org/" />
-  <link rel="alternate" hreflang="en" href="https://stanbeat.org/" />
-  <link rel="alternate" hreflang="ko" href="https://stanbeat.org/" />
-  <link rel="alternate" hreflang="x-default" href="https://stanbeat.org/" />
+  <link rel="canonical" href="/" />
+  <link rel="alternate" hreflang="en" href="/" />
+  <link rel="alternate" hreflang="ko" href="/" />
+  <link rel="alternate" hreflang="x-default" href="/" />
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://stanbeat.org/" />
-  <meta property="og:title" content="StanBeat - BTS Word Search Game | Win a Trip to Seoul ✈️" />
+  <meta property="og:url" content="/" />
+  <meta property="og:title" content="StanBeat - K-pop & K-culture Word Search Game | Win a Korea Trip" />
   <meta property="og:description"
-    content="Find BTS member names in the fastest time! Compete with ARMY worldwide and win a trip to Seoul." />
-  <meta property="og:image" content="https://stanbeat.org/icons/icon-512.png" />
+    content="Choose your fandom, find K-pop and K-culture words fast, and compete with fans worldwide for a Korea trip." />
+  <meta property="og:image" content="/icons/icon-512.png" />
   <meta property="og:image:width" content="512" />
   <meta property="og:image:height" content="512" />
   <meta property="og:site_name" content="StanBeat" />
@@ -34,54 +34,11 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:url" content="https://stanbeat.org/" />
-  <meta name="twitter:title" content="StanBeat - BTS Word Search Game | Win a Trip to Seoul ✈️" />
+  <meta name="twitter:url" content="/" />
+  <meta name="twitter:title" content="StanBeat - K-pop & K-culture Word Search Game | Win a Korea Trip" />
   <meta name="twitter:description"
-    content="Find BTS member names in the fastest time! Compete with ARMY worldwide and win a trip to Seoul." />
-  <meta name="twitter:image" content="https://stanbeat.org/icons/icon-512.png" />
-
-  <!-- Structured Data (JSON-LD) -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "WebSite",
-        "name": "StanBeat",
-        "url": "https://stanbeat.org/",
-        "description": "BTS word search game where ARMY compete for the fastest time and win prizes.",
-        "publisher": {
-          "@type": "Organization",
-          "name": "StanBeat",
-          "email": "marketing@stanbeat.org",
-          "url": "https://stanbeat.org/"
-        },
-        "potentialAction": {
-          "@type": "SearchAction",
-          "target": "https://stanbeat.org/?s={search_term_string}",
-          "query-input": "required name=search_term_string"
-        }
-      },
-      {
-        "@type": "WebApplication",
-        "name": "StanBeat",
-        "url": "https://stanbeat.org/",
-        "applicationCategory": "GameApplication",
-        "operatingSystem": "Web",
-        "offers": {
-          "@type": "Offer",
-          "price": "0",
-          "priceCurrency": "USD"
-        },
-        "aggregateRating": {
-          "@type": "AggregateRating",
-          "ratingValue": "4.8",
-          "ratingCount": "1200"
-        }
-      }
-    ]
-  }
-  </script>
+    content="Choose your fandom, find K-pop and K-culture words fast, and compete with fans worldwide for a Korea trip." />
+  <meta name="twitter:image" content="/icons/icon-512.png" />
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -93,16 +50,28 @@
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="/icons/icon-512.svg" />
 
-  <!-- Google Analytics (GA4) - StanBeat Measurement ID -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3JHEP8544P"></script>
   <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag() { dataLayer.push(arguments); }
-    gtag('js', new Date());
-    gtag('config', 'G-3JHEP8544P', {
-      page_title: document.title,
-      send_page_view: true
-    });
+    (() => {
+      const origin = window.location.origin;
+      const absolute = (path) => path.startsWith('http') ? path : `${origin}${path}`;
+      const assignments = [
+        ['link[rel="canonical"]', 'href', absolute('/')],
+        ['link[hreflang="en"]', 'href', absolute('/')],
+        ['link[hreflang="ko"]', 'href', absolute('/')],
+        ['link[hreflang="x-default"]', 'href', absolute('/')],
+        ['meta[property="og:url"]', 'content', absolute('/')],
+        ['meta[property="og:image"]', 'content', absolute('/icons/icon-512.png')],
+        ['meta[name="twitter:url"]', 'content', absolute('/')],
+        ['meta[name="twitter:image"]', 'content', absolute('/icons/icon-512.png')],
+      ];
+
+      assignments.forEach(([selector, attribute, value]) => {
+        const node = document.querySelector(selector);
+        if (node) {
+          node.setAttribute(attribute, value);
+        }
+      });
+    })();
   </script>
 
   <!-- Fonts -->
@@ -111,6 +80,10 @@
     rel="stylesheet">
   <!-- Tailwind CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Applixir Rewarded Video SDK v6 -->
+  <!-- Self-hosted to avoid ad-blocker blocking of cdn.applixir.com -->
+  <script type="text/javascript" src="/lib/player.js" async></script>
 
   <style>
     body {
@@ -294,6 +267,12 @@
       transform: scale(0.93);
     }
 
+    .btn-squishy:focus-visible {
+      outline: 2px solid #00FFFF;
+      outline-offset: 3px;
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.65);
+    }
+
     /* RTL Support */
     html[dir="rtl"] .side-menu {
       left: auto;
@@ -323,11 +302,36 @@
     .pulse-ring {
       animation: pulseRing 2s infinite;
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      .fandom-carousel-row-left,
+      .fandom-carousel-row-right {
+        transform: none;
+      }
+    }
+
+    /* AppLixir video player overlay
+       The SDK injects an iframe/video into #applixir_vanishing_div.
+       We force it to appear on top of ALL React UI (modals, overlays, etc.).
+       Visibility is managed by ApplixirProvider.ts (display: block/none). */
+    #applixir_vanishing_div {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 99999;
+      pointer-events: none;
+      display: none;
+    }
   </style>
 </head>
 
 <body>
   <div id="root"></div>
+  <!-- Required by Applixir SDK to inject the video frame -->
+  <!-- CRITICAL: Do NOT add 'hidden' attribute - SDK injects an iframe/video here -->
+  <div id="applixir_vanishing_div"></div>
   <script type="module" src="/index.tsx"></script>
 </body>
 

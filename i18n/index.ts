@@ -1,4 +1,3 @@
-import { baseMessages, MessageKey } from './base';
 import ko from './locales/ko.json';
 import en from './locales/en.json';
 import ja from './locales/ja.json';
@@ -19,64 +18,52 @@ import ms from './locales/ms.json';
 import hi from './locales/hi.json';
 import it from './locales/it.json';
 import pl from './locales/pl.json';
+import { localeManifest, type LanguageCode } from './manifest';
 
-export const languageOptions = [
-  { code: 'ko', name: '한국어', flag: '🇰🇷' },
-  { code: 'en', name: 'English', flag: '🇺🇸' },
-  { code: 'ja', name: '日本語', flag: '🇯🇵' },
-  { code: 'zh-CN', name: '简体中文', flag: '🇨🇳' },
-  { code: 'zh-TW', name: '繁體中文', flag: '🇹🇼' },
-  { code: 'id', name: 'Bahasa Indonesia', flag: '🇮🇩' },
-  { code: 'th', name: 'ไทย', flag: '🇹🇭' },
-  { code: 'vi', name: 'Tiếng Việt', flag: '🇻🇳' },
-  { code: 'es', name: 'Español', flag: '🇪🇸' },
-  { code: 'pt-BR', name: 'Português (BR)', flag: '🇧🇷' },
-  { code: 'fil', name: 'Filipino', flag: '🇵🇭' },
-  { code: 'ru', name: 'Русский', flag: '🇷🇺' },
-  { code: 'fr', name: 'Français', flag: '🇫🇷' },
-  { code: 'de', name: 'Deutsch', flag: '🇩🇪' },
-  { code: 'tr', name: 'Türkçe', flag: '🇹🇷' },
-  { code: 'ar', name: 'العربية', flag: '🇸🇦' },
-  { code: 'ms', name: 'Bahasa Melayu', flag: '🇲🇾' },
-  { code: 'hi', name: 'हिन्दी', flag: '🇮🇳' },
-  { code: 'it', name: 'Italiano', flag: '🇮🇹' },
-  { code: 'pl', name: 'Polski', flag: '🇵🇱' },
-] as const;
+export type { LanguageCode } from './manifest';
 
-export type LanguageCode = (typeof languageOptions)[number]['code'];
+export const languageOptions = localeManifest;
+export type MessageKey = keyof typeof ko;
+export type LocaleMessages = typeof ko;
 
 type Messages = Record<MessageKey, string>;
+type PartialMessages = Partial<Messages>;
 
-const dictionaries: Record<LanguageCode, Messages> = {
-  ko: ko as Messages,
-  en: en as Messages,
-  ja: ja as Messages,
-  'zh-CN': zhCN as Messages,
-  'zh-TW': zhTW as Messages,
-  id: id as Messages,
-  th: th as Messages,
-  vi: vi as Messages,
-  es: es as Messages,
-  'pt-BR': ptBR as Messages,
-  fil: fil as Messages,
-  ru: ru as Messages,
-  fr: fr as Messages,
-  de: de as Messages,
-  tr: tr as Messages,
-  ar: ar as Messages,
-  ms: ms as Messages,
-  hi: hi as Messages,
-  it: it as Messages,
-  pl: pl as Messages,
+const canonicalMessages = ko as Messages;
+const englishFallback = en as PartialMessages;
+
+const dictionaries: Record<LanguageCode, PartialMessages> = {
+  ko: ko as PartialMessages,
+  en: en as PartialMessages,
+  ja: ja as PartialMessages,
+  'zh-CN': zhCN as PartialMessages,
+  'zh-TW': zhTW as PartialMessages,
+  id: id as PartialMessages,
+  th: th as PartialMessages,
+  vi: vi as PartialMessages,
+  es: es as PartialMessages,
+  'pt-BR': ptBR as PartialMessages,
+  fil: fil as PartialMessages,
+  ru: ru as PartialMessages,
+  fr: fr as PartialMessages,
+  de: de as PartialMessages,
+  tr: tr as PartialMessages,
+  ar: ar as PartialMessages,
+  ms: ms as PartialMessages,
+  hi: hi as PartialMessages,
+  it: it as PartialMessages,
+  pl: pl as PartialMessages,
 };
 
 export const t = (lang: LanguageCode, key: MessageKey, vars?: Record<string, string>) => {
-  const table = dictionaries[lang] ?? dictionaries.en ?? dictionaries.ko;
-  let value = table[key] ?? dictionaries.en[key] ?? baseMessages[key];
+  const localeTable = dictionaries[lang] ?? dictionaries.en ?? dictionaries.ko;
+  let value = localeTable[key] ?? englishFallback[key] ?? canonicalMessages[key];
+
   if (vars) {
-    Object.entries(vars).forEach(([k, v]) => {
-      value = value.replaceAll(`{${k}}`, v);
-    });
+    for (const [name, replacement] of Object.entries(vars)) {
+      value = value.replaceAll(`{${name}}`, replacement);
+    }
   }
+
   return value;
 };

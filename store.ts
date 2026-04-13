@@ -1,51 +1,146 @@
-import { create } from 'zustand';
-import { ActivityItem, HistoryEvent, LeaderboardEntry, User, ViewState, BotConfig } from './types';
-import { LanguageCode } from './i18n';
-import { isFirebaseEnabled, firebaseSignInWithGoogle, firebaseSignOut, saveUserProfile, getUserProfile, saveScore, deleteAllScores, banUserInFirestore as banUserInFs, unbanUserInFirestore as unbanUserInFs, incrementGlobalStats, getGlobalStats, getAdminGlobalUsers, editUserHeartInFirestore, getBotConfig, saveBotConfig, listenGlobalStats } from './firebase';
-import { listenForRewards, claimRewardInFirestore, getOfferwallUrl, getRewardedVideoUrl } from './adscend';
-import { type LeagueData, generateLeague, refreshLeagueIfNeeded, getGapToFirst, getRefreshCountdown, generateGuestShowcase, generateViewOnlyLeague, getMsUntilNextUtcMidnight } from './league';
-
-// ─── Ad Config Types ──────────────────────────────────────────────
+﻿import { create } from 'zustand';
+import type { User as FirebaseUser } from 'firebase/auth';
+import { ActivityItem, AdminUserRow, AlertDialogState, ConfirmDialogState, DeferredInstallPrompt, HistoryEvent, LeaderboardEntry, User, ViewState, BotConfig, RandConfig } from './types';
+import { t, type LanguageCode } from './i18n';
+import {
+  banUserInFirestore as banUserInFs,
+  claimAdRewardRemote,
+  claimDailyHeartRemote,
+  consumeHeartForGameRemote,
+  deleteAllScores,
+  editUserHeartInFirestore,
+  firebaseSignInWithGoogle,
+  firebaseSignOut,
+  getAdConfig as getRemoteAdConfig,
+  getAdminGlobalUsers,
+  getBotConfig,
+  getGlobalStats,
+  getLeaderboardEntry,
+  getRandConfig,
+  getUserProfile,
+  isFirebaseEnabled,
+  listenGlobalStats,
+  rewardReferrer,
+  saveAdConfig as saveRemoteAdConfig,
+  saveBotConfig,
+  saveRandConfig,
+  saveUserProfile,
+  submitPlayResultRemote,
+  unbanUserInFirestore as unbanUserInFs,
+  type ServerUserSnapshot,
+} from './firebase';
+import { applixirProvider } from './services/providers/ApplixirProvider';
+import { generateAvatarUrl } from './utils';
+import { type LeagueData, generateDisplayLeagueName, refreshLeagueIfNeeded, getGapToFirst, getRefreshCountdown, generateViewOnlyLeague, getMsUntilNextUtcMidnight } from './league';
+import { markLocalApplixirRewardClaimed, recordLocalApplixirReward, waitForApplixirReward } from './services/rewards/applixirRewards';
+import { getRuntimeSiteUrl, runtimeConfig } from './runtimeConfig';
+import { getStanbeatTestApi } from './devTestApi';
+import { buildFandomUrl, persistFandomId, readStoredFandomId, resolveFandomId, type FandomId } from './features/fandom';
+// Ad config types
 export interface AdConfig {
   rewardedVideo: boolean;       // 동영상 시청형 광고 (30초 이상 긴 영상)
-  offerwall: boolean;           // 참여형 광고 (앱 설치, 설문 등)
   interstitial: boolean;        // 전면 광고 (게임 사이)
   rewardedVideoSeconds: number; // 동영상 길이 (초)
-  offerwallRewardHearts: number;// 참여형 광고 보상 하트 수
   rewardedVideoRewardHearts: number; // 동영상 보상 하트 수
   videosPerHeart: number;       // 하트 1개를 얻기 위해 시청해야 할 동영상 수
 }
 
 const DEFAULT_AD_CONFIG: AdConfig = {
   rewardedVideo: true,
-  offerwall: true,
   interstitial: false,
   rewardedVideoSeconds: 30,
-  offerwallRewardHearts: 1,
   rewardedVideoRewardHearts: 1,
-  videosPerHeart: 4,
+  videosPerHeart: 1,
 };
+
+// ─── 랜덤 알고리즘 기본값 ────────────────────────────────────────────
+const DEFAULT_RAND_CONFIG: RandConfig = {
+  // 봇 기록 정규분포 (50초 평균, 15초 표준편차)
+  botTimeMean: 50000,
+  botTimeStdDev: 15000,
+  // 리그 크기 범위
+  leagueSizeMin: 60,
+  leagueSizeMax: 99,
+  // 전체 리그 수 표시
+  totalLeaguesMean: 3624,
+  totalLeaguesStdDev: 15,
+  // 1위 추월 간격 (ms)
+  overtakeGapMin: 100,
+  overtakeGapMax: 500,
+  // 게스트 쇼케이스 기록 분포
+  showcaseTimeMean: 8000,
+  showcaseTimeStdDev: 2000,
+  // 티커 기록 범위 (초)
+  tickerTimeMin: 24.0,
+  tickerTimeMax: 42.0,
+  // 피드 한 번 갱신 시 생성 항목 수
+  feedBatchSize: 3,
+  // 총 리그 수 최솟값 하드캡
+  totalLeaguesFloor: 3500,
+};
+
+const BOT_CONFIG_STORAGE_KEY = 'stanbeat_bot_config';
+const RAND_CONFIG_STORAGE_KEY = 'stanbeat_rand_config';
+const UTC_DAY_STORAGE_KEY = 'stanbeat_utc_day';
+
+const normalizeRandConfig = (config: Partial<RandConfig>): RandConfig => {
+  const merged = { ...DEFAULT_RAND_CONFIG, ...config };
+  const leagueSizeMin = Math.max(1, Math.round(merged.leagueSizeMin));
+  const leagueSizeMax = Math.max(leagueSizeMin, Math.round(merged.leagueSizeMax));
+  const overtakeGapMin = Math.max(1, Math.round(merged.overtakeGapMin));
+  const overtakeGapMax = Math.max(overtakeGapMin, Math.round(merged.overtakeGapMax));
+  return {
+    ...merged,
+    botTimeMean: Math.max(5000, Math.round(merged.botTimeMean)),
+    botTimeStdDev: Math.max(100, Math.round(merged.botTimeStdDev)),
+    leagueSizeMin,
+    leagueSizeMax,
+    totalLeaguesMean: Math.max(1, Math.round(merged.totalLeaguesMean)),
+    totalLeaguesStdDev: Math.max(0, Math.round(merged.totalLeaguesStdDev)),
+    overtakeGapMin,
+    overtakeGapMax,
+    showcaseTimeMean: Math.max(1000, Math.round(merged.showcaseTimeMean)),
+    showcaseTimeStdDev: Math.max(100, Math.round(merged.showcaseTimeStdDev)),
+    tickerTimeMin: Math.max(1, Number(merged.tickerTimeMin)),
+    tickerTimeMax: Math.max(Math.max(1, Number(merged.tickerTimeMin)), Number(merged.tickerTimeMax)),
+    feedBatchSize: Math.max(1, Math.round(merged.feedBatchSize)),
+    totalLeaguesFloor: Math.max(1, Math.round(merged.totalLeaguesFloor)),
+  };
+};
+
+const deriveBotConfigFromRand = (config: RandConfig): BotConfig => ({
+  mean: config.botTimeMean,
+  stdDev: config.botTimeStdDev,
+});
 
 interface AppState {
   currentUser: User | null;
   currentView: ViewState;
+  activeFandomId: FandomId;
+  isGameFinished: boolean;
+  gameExitRequested: boolean;
   isMenuOpen: boolean;
+  loginPromptRequested: boolean;
+  termsPromptRequested: boolean;
   leaderboard: LeaderboardEntry[];
   language: LanguageCode;
   notice: string;
   showNoticePopup: boolean;
+  rewardMessage: string | null;
+  alertDialog: AlertDialogState | null;
+  confirmDialog: ConfirmDialogState | null;
   showBrowserBlocker: boolean;
-  deferredPrompt: any | null;
+  deferredPrompt: DeferredInstallPrompt | null;
   termsAccepted: boolean;
   seasonEndsAt: number;
   heartsUsedToday: number;
   adRevenue: number;
   activityFeed: ActivityItem[];
   adConfig: AdConfig;
-  videoWatchCount: number; // 현재 세션 리워드 비디오 시청 횟수
-  rewardListenerUnsubscribe: (() => void) | null;
+  videoWatchCount: number;
   league: LeagueData | null;
-  adminUsers: Record<string, any>[];
+  randConfig: RandConfig;
+  adminUsers: AdminUserRow[];
   adminStats: { totalHeartsUsed: number, adRevenue: number };
   botConfig: BotConfig;
   adminLoading: boolean;
@@ -54,38 +149,46 @@ interface AppState {
   adminStatsUnsubscribe: (() => void) | null;
 
   setView: (view: ViewState) => void;
+  setActiveFandom: (id: string) => void;
+  setGameFinished: (value: boolean) => void;
+  requestGameExit: () => void;
+  clearGameExitRequest: () => void;
   toggleMenu: () => void;
   setLanguage: (lang: LanguageCode) => void;
   setNotice: (value: string) => void;
   setShowNoticePopup: (value: boolean) => void;
+  showRewardToast: (msg: string | null) => void;
+  showAlertDialog: (dialog: AlertDialogState | null) => void;
+  showConfirmDialog: (dialog: ConfirmDialogState | null) => void;
   setShowBrowserBlocker: (value: boolean) => void;
-  setDeferredPrompt: (value: any | null) => void;
+  setDeferredPrompt: (value: DeferredInstallPrompt | null) => void;
   acceptTerms: () => void;
+  requestLoginPrompt: () => void;
+  requestTermsPrompt: () => void;
+  clearActionPrompts: () => void;
 
   setBotConfig: (config: BotConfig) => void;
 
-  login: () => Promise<void>;
+  login: () => Promise<boolean>;
+  restoreSessionFromAuth: (authUser: FirebaseUser) => Promise<void>;
   logout: () => void;
-  consumeHeart: () => boolean;
-  addHeart: (amount: number) => void;
+  startGame: () => Promise<'started' | 'needs_login' | 'needs_terms' | 'needs_hearts' | 'blocked'>;
   claimDailyHeart: () => Promise<boolean>;
 
-  updateBestTime: (time: number) => void;
-  addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY', value: number) => void;
-  fetchLeaderboard: () => void;
+  recordCompletedPlay: (time: number) => Promise<boolean>;
+  addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY' | 'CANCELLED', value: number) => void;
+  fetchLeaderboard: () => Promise<void>;
   initLeague: () => void;
   refreshLeague: () => void;
   getLeagueGap: () => number;
   getLeagueCountdown: () => string;
   resetSeason: () => void;
-  generateDummyBots: (count: number) => void;
   banUser: (id: string) => void;
   unbanUser: (id: string) => void;
-  editUserHeart: (id: string, hearts: number) => void;
+  editUserHeart: (id: string, hearts: number, mode?: 'SET' | 'DELTA') => void;
   getReferralLink: () => string;
 
   // Admin
-  toggleAdminRole: () => void;
   fetchAdminData: () => Promise<void>;
   startAdminLiveStats: () => void;
   stopAdminLiveStats: () => void;
@@ -94,70 +197,305 @@ interface AppState {
 
   // Ad system
   setAdConfig: (config: Partial<AdConfig>) => void;
-  watchRewardedAd: () => Promise<boolean>;
-  completeOfferwall: () => Promise<boolean>;
-  initAdscendListener: () => void;
-  getOfferUrls: () => { offerwall: string; video: string };
+  setRandConfig: (config: Partial<RandConfig>) => void;
+  refreshActivityFeed: () => void;
+  hydrateOperationalState: () => Promise<void>;
+  syncSeasonClock: () => void;
+  claimPendingAdReward: (rewardId: string) => Promise<{ claimed: boolean; grantedHearts: number }>;
+  watchRewardedAd: () => Promise<'rewarded' | 'progressed' | 'failed'>;
 }
 
 const adjectives = ['Lovely', 'Shiny', 'Happy', 'Bright', 'Neon', 'Cute', 'Royal'];
-const favorites = ['Jimin', 'V', 'Tiger', 'Jungkook', 'Hobi', 'ARMY', 'Kookie'];
-const countries = ['KR', 'US', 'JP', 'BR', 'TH', 'ID', 'PH', 'FR', 'DE', 'VN'];
-const AVATAR_SEED = 'stanbeat-avatar';
+const favorites = ['Idol', 'Stage', 'Seoul', 'Hallyu', 'Dance', 'Drama', 'KPop'];
 const MAX_HEARTS = 3;
 const MAX_HISTORY_ITEMS = 100;
 
+let rewardToastTimeout: ReturnType<typeof setTimeout> | null = null;
+let pendingRewardedVideoWaitUserId: string | null = null;
+
+export const isRewardedVideoWaitActive = (userId?: string | null): boolean => {
+  return Boolean(userId && pendingRewardedVideoWaitUserId === userId);
+};
+
+const sanitizeHistory = (history: unknown): HistoryEvent[] => {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter((record): record is HistoryEvent => {
+      if (!record || typeof record !== 'object') return false;
+      const typedRecord = record as Partial<HistoryEvent>;
+      return typeof typedRecord.type === 'string' && typeof typedRecord.value === 'number' && typeof typedRecord.date === 'string';
+    })
+    .slice(-MAX_HISTORY_ITEMS);
+};
+
+const buildUserProfilePayload = (user: User): Record<string, unknown> => ({
+  nickname: user.nickname,
+  email: user.email,
+  avatarUrl: user.avatarUrl,
+  country: user.country,
+  agreedToTerms: user.agreedToTerms,
+  gameHistory: sanitizeHistory(user.gameHistory),
+});
+
+const buildInitialUserPayload = (user: User): Record<string, unknown> => ({
+  ...buildUserProfilePayload(user),
+  hearts: user.hearts,
+  bestTime: user.bestTime,
+  role: user.role,
+  lastDailyHeart: user.lastDailyHeart,
+  banned: user.banned,
+  referralCode: user.referralCode,
+  referredBy: user.referredBy,
+  referralRewardGranted: user.referralRewardGranted,
+  rewardedVideoStreak: user.rewardedVideoStreak,
+});
+
+const syncUserIntoEntry = (entry: LeaderboardEntry, user: User): LeaderboardEntry => {
+  if (entry.id !== user.id) return entry;
+  return {
+    ...entry,
+    nickname: user.nickname,
+    country: user.country,
+    avatarUrl: user.avatarUrl,
+    hearts: user.hearts,
+    banned: user.banned,
+    ...(typeof user.bestTime === 'number' ? { time: user.bestTime } : {}),
+  };
+};
+
+const syncUserCollections = (state: Pick<AppState, 'leaderboard' | 'league'>, user: User) => {
+  const leaderboard = state.leaderboard.map((entry) => syncUserIntoEntry(entry, user));
+  const league = state.league
+    ? {
+      ...state.league,
+      entries: state.league.entries.map((entry) => syncUserIntoEntry(entry, user)),
+    }
+    : null;
+
+  return { leaderboard, league };
+};
+
+const commitUserState = (
+  state: Pick<AppState, 'leaderboard' | 'league' | 'videoWatchCount'>,
+  user: User,
+) => {
+  const syncedCollections = syncUserCollections(state, user);
+  safeStorage.set('stanbeat_user', user);
+  safeStorage.set('stanbeat_leaderboard', syncedCollections.leaderboard);
+  safeStorage.set('stanbeat_user_streak', user.rewardedVideoStreak);
+  if (syncedCollections.league) {
+    safeStorage.set('stanbeat_league', syncedCollections.league);
+  }
+
+  return {
+    currentUser: user,
+    leaderboard: syncedCollections.leaderboard,
+    league: syncedCollections.league,
+    videoWatchCount: user.rewardedVideoStreak,
+  } as const;
+};
+
+const persistUserProfileRemote = async (user: User, useBootstrapPayload: boolean = false): Promise<void> => {
+  if (!isFirebaseEnabled || !user.id) return;
+  await saveUserProfile(user.id, useBootstrapPayload ? buildInitialUserPayload(user) : buildUserProfilePayload(user));
+};
+
+const applyServerSnapshotToUser = (user: User, snapshot: ServerUserSnapshot): User => ({
+  ...user,
+  hearts: snapshot.hearts,
+  bestTime: snapshot.bestTime,
+  lastDailyHeart: snapshot.lastDailyHeart,
+  gameHistory: sanitizeHistory(snapshot.gameHistory),
+  rewardedVideoStreak: snapshot.rewardedVideoStreak,
+  referralRewardGranted: snapshot.referralRewardGranted,
+});
+
+const getRewardedAdFailureMessage = (lang: LanguageCode, result: 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig') => {
+  if (lang === 'ko') {
+    if (result === 'noAds') return '지금은 표시할 광고가 없습니다. 잠시 후 다시 시도해 주세요.';
+    if (result === 'skipped') return '광고가 끝나기 전에 닫혔습니다.';
+    if (result === 'configMissing') return 'AppLixir API 키가 설정되지 않았습니다. .env에 VITE_APPLIXIR_API_KEY를 추가해 주세요.';
+    if (result === 'invalidConfig') return '설정된 AppLixir API 키로 광고를 불러오지 못했습니다. AppLixir 대시보드의 실제 Game API Key인지 확인해 주세요.';
+    return '광고를 불러오지 못했습니다. 광고 차단, 쿠키 차단, 팝업 차단 설정을 확인해 주세요.';
+  }
+
+  if (result === 'noAds') return 'No ads are available right now. Please try again later.';
+  if (result === 'skipped') return 'The ad was closed before completion.';
+  if (result === 'configMissing') return 'AppLixir is not configured. Add VITE_APPLIXIR_API_KEY to your .env file.';
+  if (result === 'invalidConfig') return 'The configured AppLixir API key could not load VAST data. Verify that it is your real Game API key from the AppLixir dashboard.';
+  return 'Failed to load the ad. Check ad blocker, cookie, and popup settings.';
+};
+
+const getRewardValidationMessage = (lang: LanguageCode, reason: 'prepareFailed' | 'timeout') => {
+  if (lang === 'ko') {
+    if (reason === 'prepareFailed') {
+      return '광고 보상 검증 세션을 만들지 못했습니다. Firebase Functions와 AppLixir 콜백 설정을 확인해 주세요.';
+    }
+    return '광고는 완료되었지만 AppLixir 서버 콜백 보상이 아직 도착하지 않았습니다. AppLixir 대시보드 Callback URL이 Firebase applixirCallback 함수로 설정되어 있는지 확인해 주세요.';
+  }
+
+  if (reason === 'prepareFailed') {
+    return 'Failed to create the AppLixir reward validation session. Check Firebase Functions and your AppLixir callback configuration.';
+  }
+  return 'The ad completed, but the AppLixir server callback reward has not arrived yet. Verify that your AppLixir dashboard callback URL points to the Firebase applixirCallback function.';
+};
+
+const getResultSyncFailureMessage = (lang: LanguageCode) => {
+  if (lang === 'ko') {
+    return '기록을 서버에 저장하지 못했습니다. 다시 시도해 주세요.';
+  }
+  return 'We could not save your result to the server. Please try again.';
+};
+
+const getGameStartFailureMessage = (lang: LanguageCode) => {
+  if (lang === 'ko') {
+    return '게임을 시작하지 못했습니다. 이미 로그인되어 있다면 페이지를 새로고침한 뒤 다시 시도해 주세요. 계속 실패하면 Firebase Functions 배포와 CORS 설정을 확인해야 합니다.';
+  }
+  return 'Could not start the game. If you are already signed in, refresh the page and try again. If it keeps failing, check Firebase Functions deployment and CORS settings.';
+};
+
 const todayUtc = () => new Date().toISOString().slice(0, 10);
+const getCanonicalDevAuthUrl = (): string | null => {
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return null;
+
+  const { protocol, hostname, port, pathname, search, hash } = window.location;
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+  const isLoopbackAlias = hostname === '0.0.0.0';
+  const isPrivateIpv4 =
+    /^10\.\d+\.\d+\.\d+$/.test(hostname) ||
+    /^192\.168\.\d+\.\d+$/.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+$/.test(hostname);
+
+  if (isLocalhost || (!isLoopbackAlias && !isPrivateIpv4)) {
+    return null;
+  }
+
+  return `${protocol}//localhost${port ? `:${port}` : ''}${pathname}${search}${hash}`;
+};
 
 // 로컬 스토리지에 데이터를 안전하게 읽고 쓰기 위한 유틸리티 객체
 const safeStorage = {
-  // 제네릭 타입 T를 사용해 읽어올 데이터타입을 지정하고, 실패 시 반환할 fallback(기본값) 설정
   get: <T>(key: string, fallback: T): T => {
     try {
-      // 로컬 스토리지에서 해당 key로 저장된 문자열 값을 가져옴
       const value = localStorage.getItem(key);
-      // 값이 존재하면 JSON 파싱 후 T 타입으로 캐스팅해 반환, 없으면 기본값(fallback) 반환
       return value ? (JSON.parse(value) as T) : fallback;
-    } catch {
-      // 파싱 에러 등 예외 발생 시 안전하게 기본값 반환 방어 코드
+    } catch (e) {
+      // 파싱 에러는 반드시 로깅하여 손상된 데이터를 추적 가능하도록 함
+      console.error(`[safeStorage] Failed to parse key "${key}":`, e);
       return fallback;
     }
   },
-  // 제네릭 타입 T를 가지는 값을 특정 key로 로컬 스토리지에 저장
   set: <T>(key: string, value: T): void => {
     try {
-      // 객체 등의 구조화된 데이터를 JSON 문자열로 직렬화하여 스토리지에 저장
       localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      // 브라우저 저장소 용량 초과나 보안 설정 등으로 인한 예외 무시
-      // no-op
+    } catch (e) {
+      console.error(`[safeStorage] Failed to set key "${key}":`, e);
     }
   },
 };
 
-export const detectLanguageFromIP = async (): Promise<LanguageCode | null> => {
-  if (safeStorage.get<boolean>('stanbeat_manual_lang', false)) {
-    return null; // Do not override if the user manually selected a language
+const detectLocaleHints = (): { countryCode: string | null; language: LanguageCode | null } => {
+  if (typeof navigator === 'undefined') {
+    return { countryCode: null, language: null };
   }
+
+  const localeCandidates = [
+    ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+    navigator.language,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+  for (const locale of localeCandidates) {
+    const [languagePartRaw, regionPartRaw] = locale.split('-');
+    const languagePart = languagePartRaw?.toLowerCase() ?? '';
+    const regionPart = regionPartRaw?.toUpperCase() ?? null;
+
+    const languageMap: Record<string, LanguageCode> = {
+      ko: 'ko',
+      en: 'en',
+      ja: 'ja',
+      zh: regionPart === 'TW' || regionPart === 'HK' ? 'zh-TW' : 'zh-CN',
+      id: 'id',
+      th: 'th',
+      vi: 'vi',
+      es: 'es',
+      pt: 'pt-BR',
+      tl: 'fil',
+      fil: 'fil',
+      ru: 'ru',
+      fr: 'fr',
+      de: 'de',
+      tr: 'tr',
+      ar: 'ar',
+      ms: 'ms',
+      hi: 'hi',
+      it: 'it',
+      pl: 'pl',
+    };
+
+    const language = languageMap[languagePart] ?? null;
+    if (language || regionPart) {
+      return { countryCode: regionPart, language };
+    }
+  }
+
+  return { countryCode: null, language: null };
+};
+
+const shouldAttemptIpLookup = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const { protocol, hostname } = window.location;
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0';
+  return protocol === 'https:' && !isLocalhost;
+};
+
+const fetchIpGeoInfo = async (): Promise<{ countryCode: string | null; language: LanguageCode | null }> => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 3000);
   try {
     const res = await fetch('https://ipapi.co/json/', { signal: controller.signal });
-    if (!res.ok) return null;
+    if (!res.ok) return { countryCode: null, language: null };
     const data = await res.json();
-    const countryCodeCode = String(data.country_code ?? '').trim().toUpperCase();
+    const countryCode = String(data.country_code ?? '').trim().toUpperCase();
     const map: Record<string, LanguageCode> = {
       KR: 'ko', JP: 'ja', CN: 'zh-CN', TH: 'th', ID: 'id',
       VN: 'vi', PH: 'en', US: 'en', GB: 'en', AU: 'en',
       FR: 'fr', DE: 'de', ES: 'es', BR: 'pt-BR', IN: 'hi',
       TR: 'tr', AR: 'ar', SA: 'ar',
     };
-    return map[countryCodeCode] ?? null;
-  } catch {
-    return null;
+    return { countryCode: countryCode || null, language: map[countryCode] ?? null };
+  } catch (error) {
+    console.warn('[LanguageDetector] IP lookup failed, falling back to browser locale:', error);
+    return { countryCode: null, language: null };
   } finally {
     clearTimeout(timeoutId);
   }
+};
+
+export const detectLanguageFromIP = async (): Promise<LanguageCode | null> => {
+  if (safeStorage.get<boolean>('stanbeat_manual_lang', false)) {
+    return null;
+  }
+  const localeHints = detectLocaleHints();
+  if (localeHints.language) {
+    return localeHints.language;
+  }
+  if (!shouldAttemptIpLookup()) {
+    return null;
+  }
+  const { language } = await fetchIpGeoInfo();
+  return language;
+};
+
+const detectCountryFromIP = async (): Promise<string | null> => {
+  const localeHints = detectLocaleHints();
+  if (localeHints.countryCode) {
+    return localeHints.countryCode;
+  }
+  if (!shouldAttemptIpLookup()) {
+    return null;
+  }
+  const { countryCode } = await fetchIpGeoInfo();
+  return countryCode;
 };
 
 const generateNickname = () => {
@@ -177,99 +515,169 @@ const generateReferralCode = () => {
   return randomPart.padEnd(8, 'x').slice(0, 8);
 };
 
-// 유저 객체의 하트 만료 시간을 체크하여, 만료되었다면 하트를 0으로 초기화해 반환하는 상태 정규화 함수
-const normalizeHearts = (user: User) => {
-  // 만약 하트 만료 시간(expiresAt)이 설정되지 않은 유저라면 무한 하트이거나 초기화 상태이므로 그대로 반환
-  if (!user.expiresAt) return user;
+const buildUserFromAuth = async (
+  fbUser: FirebaseUser,
+  referralCode: string | null,
+): Promise<{ user: User; useBootstrapPayload: boolean }> => {
+  const newNickname = generateNickname();
+  const initialCountry = (await detectCountryFromIP()) || 'KR';
+  const existingUser = safeStorage.get<User | null>('stanbeat_user', null);
+  const [fbProfile, leaderboardEntry] = await Promise.all([
+    getUserProfile(fbUser.uid),
+    getLeaderboardEntry(fbUser.uid).catch(() => null),
+  ]);
 
-  // 현재 시간이 유저의 하트 만료 시간을 넘어섰는지 검사
-  if (Date.now() > user.expiresAt) {
-    // 만료 시간을 넘어섰다면, 보유 하트 수를 0으로 만들고 만료 시간은 null로 리셋한 새 유저 객체 반환
-    return { ...user, hearts: 0, expiresAt: null };
+  const user: User = {
+    id: fbUser.uid,
+    nickname: newNickname,
+    avatarUrl: generateAvatarUrl(fbUser.uid, newNickname),
+    email: fbUser.email || '',
+    hearts: 1,
+    bestTime: null,
+    country: initialCountry,
+    role: 'USER',
+    lastDailyHeart: null,
+    agreedToTerms: false,
+    banned: false,
+    gameHistory: [],
+    referralCode: generateReferralCode(),
+    referredBy: referralCode,
+    referralRewardGranted: false,
+    rewardedVideoStreak: 0,
+  };
+
+  const mergedProfile = fbProfile ?? {};
+  user.nickname = String(mergedProfile.nickname ?? user.nickname);
+  user.avatarUrl = String(mergedProfile.avatarUrl ?? user.avatarUrl);
+  user.country = String(mergedProfile.country ?? user.country);
+  if (mergedProfile.hearts !== undefined) user.hearts = Math.max(0, Number(mergedProfile.hearts));
+  if (mergedProfile.bestTime !== undefined) user.bestTime = Number(mergedProfile.bestTime) || null;
+  if (leaderboardEntry?.time !== undefined) user.bestTime = Number(leaderboardEntry.time) || user.bestTime;
+  user.gameHistory = sanitizeHistory(mergedProfile.gameHistory ?? existingUser?.gameHistory ?? []);
+  if (mergedProfile.agreedToTerms !== undefined) user.agreedToTerms = Boolean(mergedProfile.agreedToTerms);
+  if (mergedProfile.referralCode) user.referralCode = String(mergedProfile.referralCode);
+  if (mergedProfile.referredBy) user.referredBy = String(mergedProfile.referredBy);
+  user.referralRewardGranted = Boolean(mergedProfile.referralRewardGranted ?? existingUser?.referralRewardGranted ?? user.referralRewardGranted);
+  user.rewardedVideoStreak = Math.max(0, Number(mergedProfile.rewardedVideoStreak ?? existingUser?.rewardedVideoStreak ?? user.rewardedVideoStreak));
+  if (mergedProfile.lastDailyHeart) user.lastDailyHeart = String(mergedProfile.lastDailyHeart);
+  if (mergedProfile.role) user.role = mergedProfile.role as 'USER' | 'ADMIN';
+  if (mergedProfile.banned !== undefined) user.banned = Boolean(mergedProfile.banned);
+
+  if (!fbProfile && existingUser && existingUser.id === user.id) {
+    user.hearts = existingUser.hearts;
+    user.bestTime = existingUser.bestTime;
+    user.gameHistory = sanitizeHistory(existingUser.gameHistory);
+    user.agreedToTerms = existingUser.agreedToTerms;
+    user.referralCode = existingUser.referralCode;
+    user.referredBy = existingUser.referredBy;
+    user.referralRewardGranted = Boolean(existingUser.referralRewardGranted);
+    user.rewardedVideoStreak = Math.max(0, Number(existingUser.rewardedVideoStreak ?? 0));
+    user.lastDailyHeart = existingUser.lastDailyHeart;
+    user.banned = existingUser.banned;
   }
-  // 만료 기간이 아직 남았다면 상태를 변경하지 않고 기존 유저 객체를 반환
-  return user;
+
+  return {
+    user,
+    useBootstrapPayload: !fbProfile,
+  };
 };
 
-const mockLeaderboardBase: LeaderboardEntry[] = [
-  { id: '1', rank: 1, nickname: 'GoldenMaknae', country: 'KR', avatarUrl: 'https://picsum.photos/seed/1/80/80', time: 24500 },
-  { id: '2', rank: 2, nickname: 'BTS_Army_USA', country: 'US', avatarUrl: 'https://picsum.photos/seed/2/80/80', time: 26100 },
-  { id: '3', rank: 3, nickname: 'TaeTaeBear', country: 'JP', avatarUrl: 'https://picsum.photos/seed/3/80/80', time: 28300 },
-  { id: '4', rank: 4, nickname: 'HobiWorld', country: 'BR', avatarUrl: 'https://picsum.photos/seed/4/80/80', time: 29900 },
-  { id: '5', rank: 5, nickname: 'ChimChim', country: 'FR', avatarUrl: 'https://picsum.photos/seed/5/80/80', time: 31200 },
-];
+// NOTE: normalizeHearts(expiresAt - 3hr timer) has been REMOVED.
+// Hearts are no longer time-based. They regenerate only on 24h site visits via claimDailyHeart.
+// The mockLeaderboardBase has also been REMOVED. The leaderboard always starts empty and
+// is filled dynamically via the league system (60-99 synthetic bots per league).
 
-// Dynamic ticker generator — random league-winner announcements
+// Dynamic ticker generator - random league-winner announcements
 const TICKER_NICKNAMES = [
-  'ShinyCookie', 'GoldenArmy', 'HobiSunshine', 'TaeBear', 'JiminStar',
-  'CosmicJK', 'MoonChild', 'DynamiteQueen', 'ButterArmy', 'PurpleHeart',
-  'SeokjinLover', 'YoongiFire', 'NamjoonWise', 'BTSForever', 'ARMYPower',
-  'SpringDay', 'MikrokosmosFan', 'BangtanSoul', 'DaydreamArmy', 'EuphoriaGirl',
+  'ShinyCookie', 'GoldenWave', 'HallyuSunrise', 'TaeBeat', 'IdolStar',
+  'CosmicStage', 'MoonChild', 'DynamiteQueen', 'ButterGroove', 'PurpleHeart',
+  'SeoulLover', 'KPopFire', 'RhythmWise', 'FandomForever', 'FanPower',
+  'SpringDay', 'MikrokosmosFan', 'KCultureSoul', 'DaydreamFan', 'EuphoriaGirl',
 ];
-// 동적 알림(Ticker)용 가상의 닉네임 생성기 (BTS 팬덤 감성이 담긴 프리셋 단어 사용)
+// Dynamic ticker nickname generator for broad K-pop/K-culture fandom flavor.
 const generateTickerNickname = () => {
-  // 미리 정의된 TICKER_NICKNAMES 배열에서 무작위로 하나의 닉네임을 선택
   const name = TICKER_NICKNAMES[Math.floor(Math.random() * TICKER_NICKNAMES.length)];
-  // 실제 유저처럼 보이기 위해 1000에서 9999 사이의 4자리 무작위 숫자를 생성
   const num = Math.floor(Math.random() * 9000) + 1000;
-  // 단어와 숫자를 언더바(_)로 연결하여 최종 닉네임 문자열 반환 (예: ShinyCookie_4512)
   return `${name}_${num}`;
 };
-const generateTickerTime = () => (28 + Math.random() * 14).toFixed(1); // 28.0 ~ 42.0s
-const generateTickerLeagueId = () => {
-  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  return `${letters[Math.floor(Math.random() * 26)]}${letters[Math.floor(Math.random() * 26)]}${Math.floor(Math.random() * 90) + 10}`;
-};
+const generateTickerTime = (config: RandConfig) => (
+  config.tickerTimeMin + Math.random() * (config.tickerTimeMax - config.tickerTimeMin)
+).toFixed(1);
+const generateTickerLeagueName = () => generateDisplayLeagueName(`${Date.now()}-${Math.random()}`);
 
-const generateDynamicFeed = (): ActivityItem[] => {
+const generateDynamicFeed = (config: RandConfig, language: LanguageCode, notice: string): ActivityItem[] => {
   const items: ActivityItem[] = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < config.feedBatchSize; i++) {
     const nick = generateTickerNickname();
-    const time = generateTickerTime();
-    const league = generateTickerLeagueId();
+    const time = generateTickerTime(config);
+    const league = generateTickerLeagueName();
     items.push({
       id: `dyn-${Date.now()}-${i}`,
-      message: `🏆 League #${league}에서 ${nick}님이 ${time}초로 1등을 달성했습니다!`,
+      message: t(language, 'tickerLeague', { league, name: nick, time }),
       level: 'live',
     });
   }
   items.push({
     id: `evt-${Date.now()}`,
-    message: '[EVENT] 친구 초대 시 +1❤️ 즉시 지급!',
+    message: t(language, 'tickerEvent'),
     level: 'event',
   });
+  if (notice.trim()) {
+    items.push({
+      id: `notice-${Date.now()}`,
+      message: `${t(language, 'tickerNoticePrefix')} ${notice.trim()}`,
+      level: 'alert',
+    });
+  }
   return items;
 };
 
-const defaultFeed: ActivityItem[] = generateDynamicFeed();
-
 const savedLang = safeStorage.get<LanguageCode>('stanbeat_lang', 'en');
 const savedNotice = safeStorage.get<string>('stanbeat_notice', '');
-const savedLeaderboard = safeStorage.get<LeaderboardEntry[]>('stanbeat_leaderboard', mockLeaderboardBase);
 const savedUser = safeStorage.get<User | null>('stanbeat_user', null);
+const savedLeague = savedUser ? safeStorage.get<LeagueData | null>('stanbeat_league', null) : null;
 const savedShowNotice = safeStorage.get<boolean>('stanbeat_show_notice', false);
 const savedAdConfig = safeStorage.get<AdConfig>('stanbeat_ad_config', DEFAULT_AD_CONFIG);
-const savedBotConfig = safeStorage.get<BotConfig>('stanbeat_bot_config', { mean: 50000, stdDev: 15000 });
+const rawSavedBotConfig = safeStorage.get<BotConfig>(BOT_CONFIG_STORAGE_KEY, { mean: 50000, stdDev: 15000 });
+const savedRandConfig = normalizeRandConfig({
+  ...safeStorage.get<RandConfig>(RAND_CONFIG_STORAGE_KEY, DEFAULT_RAND_CONFIG),
+  botTimeMean: rawSavedBotConfig.mean,
+  botTimeStdDev: rawSavedBotConfig.stdDev,
+});
+const savedBotConfig = deriveBotConfigFromRand(savedRandConfig);
+const defaultFeed: ActivityItem[] = generateDynamicFeed(savedRandConfig, savedLang, savedNotice);
 
 export const useStore = create<AppState>((set, get) => ({
-  currentUser: savedUser ? normalizeHearts({ ...savedUser, gameHistory: Array.isArray(savedUser.gameHistory) ? savedUser.gameHistory.slice(-100) : [] }) : null,
+  currentUser: savedUser ? {
+    ...savedUser,
+    gameHistory: Array.isArray(savedUser.gameHistory) ? savedUser.gameHistory.slice(-100) : [],
+    referralRewardGranted: Boolean(savedUser.referralRewardGranted),
+    rewardedVideoStreak: Math.max(0, Number(savedUser.rewardedVideoStreak ?? 0)),
+  } : null,
   currentView: 'HOME',
+  activeFandomId: readStoredFandomId(),
+  isGameFinished: false,
+  gameExitRequested: false,
   isMenuOpen: false,
-  leaderboard: savedLeaderboard,
+  loginPromptRequested: false,
+  termsPromptRequested: false,
+  leaderboard: savedLeague?.entries ?? [],
   language: savedLang,
   notice: savedNotice,
   showNoticePopup: savedShowNotice,
+  rewardMessage: null,
+  alertDialog: null,
+  confirmDialog: null,
   showBrowserBlocker: false,
   deferredPrompt: null,
   termsAccepted: savedUser?.agreedToTerms ?? false,
   seasonEndsAt: safeStorage.get<number>('stanbeat_season_ends', Date.now() + getMsUntilNextUtcMidnight()),
   heartsUsedToday: safeStorage.get<number>('stanbeat_hearts_used', 0),
-  adRevenue: safeStorage.get<number>('stanbeat_ad_revenue', 4203),
+  adRevenue: safeStorage.get<number>('stanbeat_ad_revenue', 0),
   activityFeed: defaultFeed,
   adConfig: savedAdConfig,
-  videoWatchCount: 0,
-  rewardListenerUnsubscribe: null,
-  league: safeStorage.get<LeagueData | null>('stanbeat_league', null),
+  videoWatchCount: savedUser ? Math.max(0, Number(savedUser.rewardedVideoStreak ?? 0)) : safeStorage.get<number>('stanbeat_user_streak', 0),
+  league: savedLeague,
   adminUsers: [],
   adminStats: { totalHeartsUsed: 0, adRevenue: 0 },
   adminLoading: false,
@@ -277,13 +685,22 @@ export const useStore = create<AppState>((set, get) => ({
   adminLog: [],
   adminStatsUnsubscribe: null,
   botConfig: savedBotConfig,
+  randConfig: savedRandConfig,
 
   setView: (view) => {
     if (view !== get().currentView) {
-      window.history.pushState({ view }, '', window.location.pathname);
+      window.history.pushState({ view }, '', `${window.location.pathname}${window.location.search}${window.location.hash}`);
       set({ currentView: view });
     }
   },
+  setActiveFandom: (id) => {
+    const activeFandomId = resolveFandomId(id);
+    persistFandomId(activeFandomId);
+    set({ activeFandomId });
+  },
+  setGameFinished: (value) => set({ isGameFinished: value }),
+  requestGameExit: () => set({ gameExitRequested: true }),
+  clearGameExitRequest: () => set({ gameExitRequested: false }),
   toggleMenu: () => set((state) => ({ isMenuOpen: !state.isMenuOpen })),
   setLanguage: (language) => {
     safeStorage.set('stanbeat_lang', language);
@@ -293,159 +710,306 @@ export const useStore = create<AppState>((set, get) => ({
     } else {
       document.documentElement.removeAttribute('dir');
     }
-    set({ language });
+    set({
+      language,
+      activityFeed: generateDynamicFeed(get().randConfig, language, get().notice),
+    });
   },
   setNotice: (notice) => {
     safeStorage.set('stanbeat_notice', notice);
-    set({ notice });
+    set({
+      notice,
+      activityFeed: generateDynamicFeed(get().randConfig, get().language, notice),
+    });
   },
   setShowNoticePopup: (value) => {
     safeStorage.set('stanbeat_show_notice', value);
     set({ showNoticePopup: value });
   },
+  showRewardToast: (msg: string | null) => {
+    if (rewardToastTimeout) {
+      clearTimeout(rewardToastTimeout);
+      rewardToastTimeout = null;
+    }
+    set({ rewardMessage: msg });
+    if (msg) {
+      rewardToastTimeout = setTimeout(() => {
+        set({ rewardMessage: null });
+        rewardToastTimeout = null;
+      }, 3000);
+    }
+  },
+  showAlertDialog: (dialog) => set({ alertDialog: dialog }),
+  showConfirmDialog: (dialog) => set({ confirmDialog: dialog }),
   setShowBrowserBlocker: (value) => set({ showBrowserBlocker: value }),
   setDeferredPrompt: (value) => set({ deferredPrompt: value }),
+  requestLoginPrompt: () => set({ loginPromptRequested: true, currentView: 'HOME' }),
+  requestTermsPrompt: () => set({ termsPromptRequested: true, currentView: 'HOME' }),
+  clearActionPrompts: () => set({ loginPromptRequested: false, termsPromptRequested: false }),
   acceptTerms: () => {
     const user = get().currentUser;
     if (!user) return;
     const nextUser = { ...user, agreedToTerms: true };
     safeStorage.set('stanbeat_user', nextUser);
-    set({ currentUser: nextUser, termsAccepted: true });
+    set({ currentUser: nextUser, termsAccepted: true, termsPromptRequested: false });
+    if (isFirebaseEnabled) {
+      saveUserProfile(nextUser.id, { agreedToTerms: true }).catch((error) => {
+        console.error('[acceptTerms] Failed to persist terms acceptance:', error);
+      });
+    }
   },
 
   setBotConfig: (config) => {
-    safeStorage.set('stanbeat_bot_config', config);
-    set({ botConfig: config });
+    const nextRandConfig = normalizeRandConfig({
+      ...get().randConfig,
+      botTimeMean: config.mean,
+      botTimeStdDev: config.stdDev,
+    });
+    const nextBotConfig = deriveBotConfigFromRand(nextRandConfig);
+    safeStorage.set(BOT_CONFIG_STORAGE_KEY, nextBotConfig);
+    safeStorage.set(RAND_CONFIG_STORAGE_KEY, nextRandConfig);
+    set({
+      botConfig: nextBotConfig,
+      randConfig: nextRandConfig,
+      activityFeed: generateDynamicFeed(nextRandConfig, get().language, get().notice),
+    });
     if (isFirebaseEnabled) {
-      saveBotConfig(config.mean, config.stdDev).catch(console.error);
+      saveBotConfig(nextBotConfig.mean, nextBotConfig.stdDev).catch(console.error);
+      saveRandConfig({ ...nextRandConfig }).catch(console.error);
+    }
+    const user = get().currentUser;
+    if (user?.bestTime) {
+      get().refreshLeague();
+    } else {
+      if (user) {
+        safeStorage.set('stanbeat_league', null);
+        set({ league: null });
+      }
+      void get().fetchLeaderboard();
+    }
+  },
+
+  setRandConfig: (partial) => {
+    const nextRandConfig = normalizeRandConfig({ ...get().randConfig, ...partial });
+    const nextBotConfig = deriveBotConfigFromRand(nextRandConfig);
+    safeStorage.set(RAND_CONFIG_STORAGE_KEY, nextRandConfig);
+    safeStorage.set(BOT_CONFIG_STORAGE_KEY, nextBotConfig);
+    set({
+      randConfig: nextRandConfig,
+      botConfig: nextBotConfig,
+      activityFeed: generateDynamicFeed(nextRandConfig, get().language, get().notice),
+    });
+    if (isFirebaseEnabled) {
+      saveBotConfig(nextBotConfig.mean, nextBotConfig.stdDev).catch(console.error);
+      saveRandConfig({ ...nextRandConfig }).catch(console.error);
+    }
+    const user = get().currentUser;
+    if (user?.bestTime) {
+      get().refreshLeague();
+    } else {
+      if (user) {
+        safeStorage.set('stanbeat_league', null);
+        set({ league: null });
+      }
+      void get().fetchLeaderboard();
+    }
+  },
+
+  hydrateOperationalState: async () => {
+    get().syncSeasonClock();
+    const currentRandConfig = normalizeRandConfig(get().randConfig);
+    let nextRandConfig = currentRandConfig;
+    let nextAdConfig = get().adConfig;
+
+    if (isFirebaseEnabled) {
+      try {
+        const [remoteRandConfig, remoteBotConfig, remoteAdConfig] = await Promise.all([
+          getRandConfig(),
+          getBotConfig(),
+          getRemoteAdConfig(),
+        ]);
+
+        if (remoteRandConfig) {
+          nextRandConfig = normalizeRandConfig({ ...nextRandConfig, ...remoteRandConfig });
+        }
+        if (remoteBotConfig) {
+          nextRandConfig = normalizeRandConfig({
+            ...nextRandConfig,
+            botTimeMean: remoteBotConfig.mean,
+            botTimeStdDev: remoteBotConfig.stdDev,
+          });
+        }
+        if (remoteAdConfig) {
+          nextAdConfig = { ...nextAdConfig, ...remoteAdConfig } as AdConfig;
+        }
+      } catch (error) {
+        console.warn('[hydrateOperationalState] Falling back to local operational config:', error);
+      }
+    }
+
+    const nextBotConfig = deriveBotConfigFromRand(nextRandConfig);
+    safeStorage.set(RAND_CONFIG_STORAGE_KEY, nextRandConfig);
+    safeStorage.set(BOT_CONFIG_STORAGE_KEY, nextBotConfig);
+    safeStorage.set('stanbeat_ad_config', nextAdConfig);
+    set({
+      randConfig: nextRandConfig,
+      botConfig: nextBotConfig,
+      adConfig: nextAdConfig,
+      activityFeed: generateDynamicFeed(nextRandConfig, get().language, get().notice),
+    });
+
+    const user = get().currentUser;
+    if (user?.bestTime) {
+      const configChanged = JSON.stringify(currentRandConfig) !== JSON.stringify(nextRandConfig);
+      if (configChanged) {
+        get().refreshLeague();
+      } else {
+        get().initLeague();
+      }
+    } else {
+      if (user) {
+        safeStorage.set('stanbeat_league', null);
+        set({ league: null });
+      }
+      void get().fetchLeaderboard();
+    }
+  },
+
+  refreshActivityFeed: () => {
+    const { randConfig, language, notice } = get();
+    set({ activityFeed: generateDynamicFeed(randConfig, language, notice) });
+  },
+
+  syncSeasonClock: () => {
+    const now = Date.now();
+    const currentUtcDay = todayUtc();
+    const storedUtcDay = safeStorage.get<string>(UTC_DAY_STORAGE_KEY, currentUtcDay);
+    const currentSeasonEndsAt = get().seasonEndsAt;
+    const needsReset = storedUtcDay !== currentUtcDay || currentSeasonEndsAt <= now;
+    const nextSeasonEndsAt = now + getMsUntilNextUtcMidnight();
+
+    if (!needsReset) {
+      if (Math.abs(currentSeasonEndsAt - nextSeasonEndsAt) > 1000) {
+        safeStorage.set('stanbeat_season_ends', nextSeasonEndsAt);
+        set({ seasonEndsAt: nextSeasonEndsAt });
+      }
+      return;
+    }
+
+    safeStorage.set(UTC_DAY_STORAGE_KEY, currentUtcDay);
+    safeStorage.set('stanbeat_season_ends', nextSeasonEndsAt);
+    safeStorage.set('stanbeat_hearts_used', 0);
+    safeStorage.set('stanbeat_league', null);
+    set({
+      seasonEndsAt: nextSeasonEndsAt,
+      heartsUsedToday: 0,
+      league: null,
+    });
+
+    const user = get().currentUser;
+    if (user?.bestTime) {
+      get().refreshLeague();
+    } else {
+      void get().fetchLeaderboard();
     }
   },
 
   // ─── 인증 (Auth) 로직 ─────────────────────────────────────────────────────
   // 구글 로그인을 처리하고 유저 데이터를 초기화하거나 기존 데이터를 불러오는 함수
   login: async () => {
-    // 현재 접속한 브라우저의 URL에 있는 쿼리(query) 파라미터들을 파싱합니다.
     const urlParams = new URLSearchParams(window.location.search);
-    // 쿼리 파라미터 중 추천인 코드('ref')가 있는지 확인하여 가져옵니다.
     const refCode = urlParams.get('ref');
+    const canonicalDevAuthUrl = getCanonicalDevAuthUrl();
 
-    // 파이어베이스(연동) 기능이 활성화되어 환경변수로 로드된 경우만 로그인 시도
-    if (isFirebaseEnabled) {
-      try {
-        // 인앱 브라우저(인스타그램, 페이스북, 카카오톡 등) 감지 및 경고
-        const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
-        const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads|TikTok|Daum/i.test(userAgent);
-        if (isEmbeddedBrowser) {
-          alert('인앱 브라우저에서는 구글 로그인이 차단될 수 있습니다. 오른쪽 위 메뉴(⋮)를 눌러 기본 브라우저(Chrome/Safari)로 열어주세요.\n\nIn-app browsers may block Google Login. Please open in Chrome/Safari.');
-        }
+    if (canonicalDevAuthUrl) {
+      console.warn(`[Auth] Redirecting dev login flow to canonical localhost origin: ${canonicalDevAuthUrl}`);
+      window.location.replace(canonicalDevAuthUrl);
+      return false;
+    }
 
-        // 파이어베이스에서 제공하는 구글 팝업 로그인을 실행하여 결과를 받아옵니다.
-        const fbUser = await firebaseSignInWithGoogle();
-        // 로그인 결과가 없다면(팝업 닫힘 등) 에러를 발생시켜 catch 블록으로 넘깁니다.
-        if (!fbUser) throw new Error('Google sign-in returned no user');
+    if (!isFirebaseEnabled) {
+      get().showAlertDialog({
+        title: t(get().language, 'loginRequired'),
+        message: t(get().language, 'loginFailed'),
+        tone: 'error',
+      });
+      return false;
+    }
 
-        // 새로 로그인한 사용자의 초기 데이터 구조를 생성합니다.
-        const user: User = {
-          id: fbUser.uid, // 파이어베이스에서 부여한 고유 UID 
-          // 구글 프로필 이름 대신 임의의 닉네임을 생성하여 익명성을 보장합니다.
-          nickname: generateNickname(),
-          // 구글 프로필 사진이 있으면 쓰고, 없으면 시드값을 이용해 랜덤 아바타 이미지를 생성
-          avatarUrl: fbUser.photoURL || `https://picsum.photos/seed/${AVATAR_SEED}${Date.now()}/100/100`,
-          email: fbUser.email || '', // 구글 이메일 (없을 경우 빈 문자열 부여)
-          hearts: 1, // 신규 가입 시 보너스 개념으로 바로 플레이 가능하도록 하트 1개 지급
-          bestTime: null, // 초기 최고 기록은 없으므로 null로 설정
-          country: 'KR', // 기본 국가 코드는 KR(한국)로 설정 (이후 서비스 로직에 따라 변경 가능)
-          role: 'USER', // 기본 권한 레벨을 일반 사용자로 설정
-          // 지급한 1개의 하트가 3시간 뒤에 만료되도록 만료 시간 계산하여 설정
-          expiresAt: null,
-          lastDailyHeart: null, // 아직 일일 무료 하트를 받은 기록이 없으므로 null
-          agreedToTerms: false, // 최초 로그인 시 약관 동의 절차를 거치지 않았으므로 false 설정
-          banned: false, // 블랙리스트(차단) 상태를 기본값인 false로 설정
-          gameHistory: [], // 모든 플레이 기록을 담을 배열 초기화
-          referralCode: generateReferralCode(), // 나만의 8자리 고유 추천인 코드 발급
-          referredBy: refCode, // URL에 추천인 코드가 있었다면 내 계정에 추천자(referredBy) 등록
-        };
-
-        // 파이어베이스(Firestore)에서 기존 데이터가 있는지 먼저 확인합니다.
-        const fbProfile = await getUserProfile(user.id);
-
-        if (fbProfile) {
-          user.nickname = (fbProfile.nickname as string) || user.nickname;
-          user.avatarUrl = (fbProfile.avatarUrl as string) || user.avatarUrl;
-          user.country = (fbProfile.country as string) || user.country;
-          if (fbProfile.hearts !== undefined) user.hearts = Number(fbProfile.hearts);
-          if (fbProfile.bestTime !== undefined) user.bestTime = Number(fbProfile.bestTime) || null;
-          if (fbProfile.gameHistory) user.gameHistory = fbProfile.gameHistory as HistoryEvent[];
-          if (fbProfile.agreedToTerms !== undefined) user.agreedToTerms = Boolean(fbProfile.agreedToTerms);
-          if (fbProfile.referralCode) user.referralCode = fbProfile.referralCode as string;
-          if (fbProfile.referredBy) user.referredBy = fbProfile.referredBy as string;
-          if (fbProfile.lastDailyHeart) user.lastDailyHeart = fbProfile.lastDailyHeart as string;
-          if (fbProfile.expiresAt) user.expiresAt = Number(fbProfile.expiresAt);
-          if (fbProfile.role) user.role = fbProfile.role as 'USER' | 'ADMIN';
-          if (fbProfile.banned !== undefined) user.banned = Boolean(fbProfile.banned);
-        } else {
-          // Firebase 계정이 신규 생성되었고 추천인 코드가 있다면 보상 로직 호출
-          if (isFirebaseEnabled && refCode) {
-            import('./firebase').then(m => m.rewardReferrer(refCode).catch(console.error));
-          }
-          // Firestore 계정이 없지만 로컬 스토리지에 이전에 저장된 기존 유저 데이터가 있는지 확인
-          const existingUser = safeStorage.get<User | null>('stanbeat_user', null);
-          if (existingUser && existingUser.id === user.id) {
-            user.hearts = existingUser.hearts;
-            user.bestTime = existingUser.bestTime;
-            user.gameHistory = existingUser.gameHistory;
-            user.agreedToTerms = existingUser.agreedToTerms;
-            user.referralCode = existingUser.referralCode;
-            user.referredBy = existingUser.referredBy;
-            user.lastDailyHeart = existingUser.lastDailyHeart;
-            user.expiresAt = existingUser.expiresAt;
-            user.role = existingUser.role;
-            user.banned = existingUser.banned;
-          }
-        }
-
-        // 새롭게 만들어지거나 병합된 유저 데이터를 로컬 스토리지에 저장합니다.
-        safeStorage.set('stanbeat_user', user);
-        // 하트 상태 검사(normalizeHearts) 후 Zustand 글로벌 저장소(store) 상태 업데이트
-        set({ currentUser: normalizeHearts(user), termsAccepted: user.agreedToTerms });
-
-        // 파이어베이스(Firestore)에도 유저 프로필 정보를 비동기로 저장/업데이트 요청
-        saveUserProfile(user.id, {
-          nickname: user.nickname,
-          email: user.email,
-          avatarUrl: user.avatarUrl,
-          country: user.country,
-        }).catch(console.error); // 실패 시 콘솔에 에러만 기록
-
-        if (user.banned) {
-          alert('이 계정은 이용이 정지되었습니다.\nThis account has been suspended.');
-          return;
-        }
-
-      } catch (error: unknown) {
-        // 로그인이 실패하거나 여러 이유로 진행할 수 없었을 때 발생
-        console.error('Google login failed:', error);
-        const message = error instanceof Error ? error.message : String(error);
-        const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
-
-        // 403 disallowed_useragent 에러 (보통 인앱 브라우저 등에서 구글이 차단할 때 발생)
-        // UA-based in-app browser detection (more reliable than error message parsing)
-        const ua = navigator.userAgent || '';
-        const isInAppBrowser = /FBAN|FBAV|Instagram|KAKAOTALK|NAVER|Line\/|Twitter|Snapchat|TikTok|Daum|SamsungBrowser\/.*CrossApp/i.test(ua);
-
-        if (message.includes('disallowed_useragent') || isInAppBrowser) {
-          set({ showBrowserBlocker: true });
-        } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-          // User cancelled login — do nothing
-          console.log('[Auth] Login cancelled by user.');
-        } else if (code === 'auth/unauthorized-domain') {
-          // Domain not authorized in Firebase Console
-          console.error('[Auth] This domain is not authorized in Firebase. Add it at: Firebase Console > Authentication > Settings > Authorized domains');
-          alert('이 도메인에서는 로그인할 수 없습니다. 관리자에게 문의하세요.\nLogin not available on this domain. Please contact admin.');
-        } else {
-          alert('구글 로그인에 실패했습니다. 다시 시도해주세요.\nGoogle login failed. Please try again.');
-        }
+    try {
+      const userAgent = navigator.userAgent || navigator.vendor || (window as Window & { opera?: string }).opera || '';
+      const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads|TikTok|Daum/i.test(userAgent);
+      if (isEmbeddedBrowser) {
+        set({ showBrowserBlocker: true });
+        return false;
       }
+
+      const fbUser = await firebaseSignInWithGoogle();
+      if (!fbUser) throw new Error('Google sign-in returned no user');
+      const { user, useBootstrapPayload } = await buildUserFromAuth(fbUser, refCode);
+
+      safeStorage.set('stanbeat_user', user);
+      safeStorage.set('stanbeat_user_streak', user.rewardedVideoStreak);
+      set({ currentUser: user, termsAccepted: user.agreedToTerms, loginPromptRequested: false, termsPromptRequested: false, videoWatchCount: user.rewardedVideoStreak });
+
+      await persistUserProfileRemote(user, useBootstrapPayload);
+
+      if (user.banned) {
+        get().showAlertDialog({
+          title: t(get().language, 'adminTitle'),
+          message: t(get().language, 'accountSuspended'),
+          tone: 'warning',
+        });
+        return false;
+      }
+
+      return true;
+    } catch (error: unknown) {
+      console.error('Google login failed:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
+      const ua = navigator.userAgent || '';
+      const isInAppBrowser = /FBAN|FBAV|Instagram|KAKAOTALK|NAVER|Line\/|Twitter|Snapchat|TikTok|Daum|SamsungBrowser\/.*CrossApp/i.test(ua);
+
+      if (message.includes('disallowed_useragent') || isInAppBrowser) {
+        set({ showBrowserBlocker: true });
+      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        console.log('[Auth] Login cancelled by user.');
+      } else if (code === 'auth/unauthorized-domain') {
+        console.error(`[Auth] Unauthorized domain for Google login: ${window.location.origin}`);
+        console.error('[Auth] This domain is not authorized in Firebase. Add it at: Firebase Console > Authentication > Settings > Authorized domains');
+        get().showAlertDialog({
+          title: t(get().language, 'loginRequired'),
+          message: t(get().language, 'unauthorizedDomain'),
+          tone: 'error',
+        });
+      } else {
+        get().showAlertDialog({
+          title: t(get().language, 'loginRequired'),
+          message: t(get().language, 'loginFailed'),
+          tone: 'error',
+        });
+      }
+      return false;
+    }
+  },
+
+  restoreSessionFromAuth: async (authUser) => {
+    if (!isFirebaseEnabled) return;
+
+    try {
+      const { user, useBootstrapPayload } = await buildUserFromAuth(authUser, null);
+      const committed = commitUserState(get(), user);
+      set({
+        ...committed,
+        termsAccepted: user.agreedToTerms,
+        loginPromptRequested: false,
+        termsPromptRequested: false,
+      });
+      await persistUserProfileRemote(user, useBootstrapPayload);
+      get().initLeague();
+    } catch (error) {
+      console.error('[restoreSessionFromAuth] Failed to restore authenticated session:', error);
     }
   },
 
@@ -453,161 +1017,202 @@ export const useStore = create<AppState>((set, get) => ({
     if (isFirebaseEnabled) {
       firebaseSignOut().catch(console.error);
     }
-    // Stop admin live stats listener if active
     const unsub = get().adminStatsUnsubscribe;
     if (unsub) { unsub(); }
-    // Unsubscribe ad reward listener if active
-    const adUnsub = get().rewardListenerUnsubscribe;
-    if (adUnsub) { adUnsub(); }
+    if (rewardToastTimeout) {
+      clearTimeout(rewardToastTimeout);
+      rewardToastTimeout = null;
+    }
     safeStorage.set('stanbeat_user', null);
-    set({ currentUser: null, currentView: 'HOME', termsAccepted: false, videoWatchCount: 0, rewardListenerUnsubscribe: null, adminStatsUnsubscribe: null });
+    safeStorage.set('stanbeat_league', null);
+    safeStorage.set('stanbeat_leaderboard', []);
+    safeStorage.set('stanbeat_user_streak', 0);
+    set({
+      currentUser: null,
+      currentView: 'HOME',
+      termsAccepted: false,
+      videoWatchCount: 0,
+      adminStatsUnsubscribe: null,
+      rewardMessage: null,
+      alertDialog: null,
+      confirmDialog: null,
+      league: null,
+      leaderboard: [],
+      adminUsers: [],
+      loginPromptRequested: false,
+      termsPromptRequested: false,
+    });
   },
 
-  consumeHeart: () => {
+  startGame: async () => {
     const user = get().currentUser;
-    if (!user || user.banned) return false;
-    // Admin bypass: always allow playing without consuming a heart
-    if (user.role === 'ADMIN') return true;
-
-    const normalized = normalizeHearts(user);
-    if (normalized.hearts <= 0) {
-      set({ currentUser: normalized });
-      safeStorage.set('stanbeat_user', normalized);
-      return false;
+    const testApi = getStanbeatTestApi();
+    if (!user) {
+      set({ currentView: 'HOME', loginPromptRequested: true, termsPromptRequested: false });
+      return 'needs_login';
+    }
+    if (user.banned) {
+      get().showAlertDialog({
+        title: t(get().language, 'adminTitle'),
+        message: t(get().language, 'accountSuspended'),
+        tone: 'warning',
+      });
+      return 'blocked';
+    }
+    if (!user.agreedToTerms || !get().termsAccepted) {
+      set({ currentView: 'HOME', loginPromptRequested: false, termsPromptRequested: true });
+      return 'needs_terms';
+    }
+    if (!isFirebaseEnabled && !testApi?.functions?.consumeHeartForGame) {
+      get().showAlertDialog({
+        title: t(get().language, 'playNow'),
+        message: getGameStartFailureMessage(get().language),
+        tone: 'error',
+      });
+      return 'blocked';
     }
 
-    // Heart consumed (for normal users)
-    if (isFirebaseEnabled) {
-      incrementGlobalStats(1, 0); // Increment global hearts used by 1
-    }
+    try {
+      const response = await consumeHeartForGameRemote();
+      if (response.user) {
+        const nextUser = applyServerSnapshotToUser(user, response.user);
+        const committed = commitUserState(get(), nextUser);
+        const nextHeartsUsed = response.status === 'consumed' ? get().heartsUsedToday + 1 : get().heartsUsedToday;
+        if (response.status === 'consumed') {
+          safeStorage.set('stanbeat_hearts_used', nextHeartsUsed);
+        }
+        set({
+          ...committed,
+          heartsUsedToday: nextHeartsUsed,
+          loginPromptRequested: false,
+          termsPromptRequested: false,
+        });
+      }
 
-    const updatedUser = { ...normalized, hearts: normalized.hearts - 1 };
+      if (response.status === 'consumed') return 'started';
+      if (response.status === 'no_hearts') return 'needs_hearts';
 
-    if (isFirebaseEnabled && updatedUser.id) {
-      import('./firebase').then(m => m.saveUserProfile(updatedUser.id, { hearts: updatedUser.hearts }).catch(console.error));
+      get().showAlertDialog({
+        title: t(get().language, 'adminTitle'),
+        message: t(get().language, 'accountSuspended'),
+        tone: 'warning',
+      });
+      return 'blocked';
+    } catch (error) {
+      console.error('[startGame] Failed to consume heart:', error);
+      get().showAlertDialog({
+        title: t(get().language, 'playNow'),
+        message: getGameStartFailureMessage(get().language),
+        tone: 'error',
+      });
+      return 'blocked';
     }
-    const newHeartsUsed = get().heartsUsedToday + 1;
-    safeStorage.set('stanbeat_user', updatedUser);
-    safeStorage.set('stanbeat_hearts_used', newHeartsUsed);
-    set({ heartsUsedToday: newHeartsUsed, currentUser: updatedUser });
-    return true;
   },
 
-  addHeart: (amount) => {
-    const user = get().currentUser;
-    if (!user || user.banned) return;
-    const normalized = normalizeHearts(user);
-    const record: HistoryEvent | null = amount > 0 ? { type: 'AD', value: amount, date: new Date().toISOString() } : null;
-    const nextHistory = record ? [...normalized.gameHistory, record] : normalized.gameHistory;
-
-    const updatedUser = {
-      ...normalized,
-      hearts: Math.max(0, Math.min(MAX_HEARTS, normalized.hearts + amount)),
-      gameHistory: nextHistory.slice(-MAX_HISTORY_ITEMS),
-    };
-
-    if (isFirebaseEnabled && updatedUser.id) {
-      import('./firebase').then(m => m.saveUserProfile(updatedUser.id, { hearts: updatedUser.hearts, gameHistory: updatedUser.gameHistory }).catch(console.error));
-    }
-
-    // Track globally (approximation of ad revenue triggered by heart addition logic)
-    const revDelta = amount > 0 ? 0.35 : 0;
-    if (isFirebaseEnabled && revDelta > 0) {
-      incrementGlobalStats(0, revDelta);
-    }
-
-    const newRevenue = get().adRevenue + revDelta;
-    safeStorage.set('stanbeat_user', updatedUser);
-    safeStorage.set('stanbeat_ad_revenue', newRevenue);
-    set({ adRevenue: newRevenue, currentUser: updatedUser });
-  },
-
-  // ─── 일일 하트 지급 처리 ──────────────────────────────────────────
   claimDailyHeart: async () => {
     const user = get().currentUser;
     if (!user || user.banned) return false;
-    const normalized = normalizeHearts(user);
-
-    let todayStr = todayUtc();
     try {
-      // Validate via un-spoofable public time API instead of local device clock
-      const res = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
-      const data = await res.json();
-      todayStr = data.datetime.slice(0, 10);
-    } catch {
-      // Silently fallback to device time if API is blocked/offline
+      const response = await claimDailyHeartRemote();
+      if (response.user) {
+        const nextUser = applyServerSnapshotToUser(user, response.user);
+        const committed = commitUserState(get(), nextUser);
+        set(committed);
+      }
+      return response.status === 'claimed';
+    } catch (error) {
+      console.error('[claimDailyHeart] Failed to claim daily reward:', error);
+      throw new Error(t(get().language, 'serverTimeError'));
     }
-
-    if (normalized.lastDailyHeart === todayStr) {
-      set({ currentUser: normalized });
-      return false;
-    }
-    const record: HistoryEvent = { type: 'DAILY', value: 1, date: new Date().toISOString() };
-    const updatedUser = {
-      ...normalized,
-      hearts: Math.min(normalized.hearts + 1, MAX_HEARTS),
-      lastDailyHeart: todayStr,
-      gameHistory: [...normalized.gameHistory, record].slice(-MAX_HISTORY_ITEMS),
-    };
-
-    if (isFirebaseEnabled && updatedUser.id) {
-      import('./firebase').then(m => m.saveUserProfile(updatedUser.id, { hearts: updatedUser.hearts, lastDailyHeart: updatedUser.lastDailyHeart, gameHistory: updatedUser.gameHistory }).catch(console.error));
-    }
-    safeStorage.set('stanbeat_user', updatedUser);
-    set({ currentUser: updatedUser });
-    return true;
   },
 
-  // ─── 최고 기록 갱신 및 Firestore 저장 ──────────────────────────────
-  updateBestTime: (time) => {
-    // Basic debounce guard to prevent high-frequency physics spam updates
-    if (time < 5000) {
+  recordCompletedPlay: async (time) => {
+    if (time < 1000) {
       console.warn(`[Anti-Cheat] Rejected impossible time: ${time}ms`);
+      return false;
+    }
+
+    const user = get().currentUser;
+    if (!user || user.banned) return false;
+
+    const maxAttempts = getStanbeatTestApi() ? 1 : 3;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const response = await submitPlayResultRemote(time);
+        if (response.status !== 'saved' || !response.user) {
+          if (response.status === 'banned') {
+            get().showAlertDialog({
+              title: t(get().language, 'adminTitle'),
+              message: t(get().language, 'accountSuspended'),
+              tone: 'warning',
+            });
+          }
+          return false;
+        }
+
+        const nextUser = applyServerSnapshotToUser(user, response.user);
+        const committed = commitUserState(get(), nextUser);
+        set(committed);
+
+        if (response.isNewBest) {
+          get().refreshLeague();
+        } else {
+          get().initLeague();
+        }
+
+        if (response.firstCompletedPlay && nextUser.referredBy && !nextUser.referralRewardGranted) {
+          rewardReferrer(nextUser.referredBy, nextUser.id)
+            .then((result) => {
+              if (result !== 'granted' && result !== 'already_rewarded') return;
+              const latestUser = get().currentUser;
+              if (!latestUser || latestUser.id !== nextUser.id || latestUser.referralRewardGranted) return;
+              const rewardedUser = { ...latestUser, referralRewardGranted: true };
+              const rewardCommitted = commitUserState(get(), rewardedUser);
+              set(rewardCommitted);
+            })
+            .catch((error) => {
+              console.error('[recordCompletedPlay] Failed to reward referrer:', error);
+            });
+        }
+
+        return true;
+      } catch (error) {
+        console.error(`[recordCompletedPlay] Failed to submit play result (attempt ${attempt + 1}/${maxAttempts}):`, error);
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+          continue;
+        }
+      }
+    }
+
+    get().showAlertDialog({
+      title: t(get().language, 'save'),
+      message: getResultSyncFailureMessage(get().language),
+      tone: 'error',
+    });
+    return false;
+  },
+
+  addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY' | 'CANCELLED', value: number) => {
+    const user = get().currentUser;
+    if (!user) return;
+
+    if (type === 'PLAY' || type === 'AD' || type === 'DAILY') {
       return;
     }
 
-    const user = get().currentUser;
-    if (!user || user.banned) return;
-
-    // 신기록일 경우에만 업데이트 및 리그 재생성 수행
-    if (!user.bestTime || time < user.bestTime) {
-      const nextUser = { ...user, bestTime: time };
-      safeStorage.set('stanbeat_user', nextUser);
-      set({ currentUser: nextUser });
-
-      // 유저의 최고 기록이 바뀌었으므로, 이에 맞춰 봇들의 난이도를 
-      // 재조정(스케일링)하기 위해 리그를 즉시 갱신합니다.
-      get().initLeague();
-
-      // Save to Firestore leaderboard
-      if (isFirebaseEnabled && nextUser.bestTime) {
-        saveScore(nextUser.id, {
-          nickname: nextUser.nickname,
-          country: nextUser.country,
-          avatarUrl: nextUser.avatarUrl,
-          time: nextUser.bestTime,
-        }).catch(console.error);
-      }
-    }
-  },
-
-  addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY', value: number) => {
-    const user = get().currentUser;
-    if (!user) return;
     const record: HistoryEvent = { type, value, date: new Date().toISOString() };
-    const nextUser = { ...user, gameHistory: [...user.gameHistory, record].slice(-MAX_HISTORY_ITEMS) };
-    safeStorage.set('stanbeat_user', nextUser);
-    set({ currentUser: nextUser });
-
-    // 비동기 동작, 실패해도 화면엔 영향 없도록 catch
-    if (isFirebaseEnabled && nextUser.id && type === 'PLAY') {
-      import('./firebase').then(m => m.saveUserProfile(nextUser.id, { gameHistory: nextUser.gameHistory }).catch(console.error));
-    }
+    const nextUser = { ...user, gameHistory: [...sanitizeHistory(user.gameHistory), record].slice(-MAX_HISTORY_ITEMS) };
+    const committed = commitUserState(get(), nextUser);
+    set(committed);
+    persistUserProfileRemote(nextUser).catch((error) => {
+      console.error('[addHistoryEvent] Firestore sync failed:', error);
+    });
   },
 
   // ─── 리더보드 데이터 호출 및 리그 로딩 ─────────────────────────────
-  fetchLeaderboard: () => {
-    // 유저 기록이 있으면 리그 시스템에 위임
+  fetchLeaderboard: async () => {
     const current = get().currentUser;
     if (current?.bestTime) {
       get().initLeague();
@@ -617,12 +1222,11 @@ export const useStore = create<AppState>((set, get) => ({
         return;
       }
     }
-    // For logged-in users WITHOUT a record: generate view-only league (60-99 synthetic players)
+
     if (current && !current.bestTime) {
       const existingLeague = get().league;
-      if (!existingLeague || existingLeague.userBestAtGeneration !== null) {
-        // userBestAtGeneration이 null이 아니면(임시게스트가 아니면) 게스트 전용 뷰 생성
-        const viewLeague = generateViewOnlyLeague(current.id, get().botConfig);
+      if (!existingLeague || existingLeague.userBestAtGeneration !== null || !existingLeague.displayName) {
+        const viewLeague = generateViewOnlyLeague(current.id, get().randConfig);
         safeStorage.set('stanbeat_league', viewLeague);
         set({ league: viewLeague, leaderboard: viewLeague.entries });
       } else {
@@ -630,8 +1234,8 @@ export const useStore = create<AppState>((set, get) => ({
       }
       return;
     }
-    // Not logged in: use stored leaderboard as-is
-    set({ leaderboard: get().leaderboard });
+
+    set({ leaderboard: [] });
   },
 
   // ─── 리그 알고리즘 초기화 방아쇠 ──────────────────────────────────
@@ -646,7 +1250,7 @@ export const useStore = create<AppState>((set, get) => ({
       user.nickname,
       user.country,
       user.avatarUrl,
-      get().botConfig
+      get().randConfig
     );
     if (league && league !== currentLeague) {
       safeStorage.set('stanbeat_league', league);
@@ -658,20 +1262,17 @@ export const useStore = create<AppState>((set, get) => ({
     const user = get().currentUser;
     if (!user?.bestTime) return;
     const currentLeague = get().league;
-    const hasNewBest = currentLeague?.userBestAtGeneration !== null &&
-      currentLeague?.userBestAtGeneration !== undefined &&
-      user.bestTime < currentLeague.userBestAtGeneration;
-    const league = generateLeague(
+    const refreshBaseline = currentLeague ? { ...currentLeague, lastRefresh: 0 } : null;
+    const league = refreshLeagueIfNeeded(
+      refreshBaseline,
       user.bestTime,
       user.id,
       user.nickname,
       user.country,
       user.avatarUrl,
-      currentLeague?.userRank ?? null,
-      hasNewBest,
-      currentLeague?.userRank === 1, // overtakeUser
-      get().botConfig
+      get().randConfig
     );
+    if (!league) return;
     safeStorage.set('stanbeat_league', league);
     set({ league, leaderboard: league.entries });
   },
@@ -684,58 +1285,31 @@ export const useStore = create<AppState>((set, get) => ({
 
   getLeagueCountdown: () => {
     const league = get().league;
-    if (!league) return '30:00';
+    if (!league) return '10:00';
     return getRefreshCountdown(league);
   },
 
   resetSeason: () => {
+    // Season reset: wipe all scores. Leaderboard starts empty and is filled
+    // dynamically by the League system (60-99 synthetic bots per league).
     const newEndTime = Date.now() + getMsUntilNextUtcMidnight();
-    safeStorage.set('stanbeat_leaderboard', mockLeaderboardBase);
+    safeStorage.set('stanbeat_leaderboard', []);
+    safeStorage.set('stanbeat_league', null);
 
     if (isFirebaseEnabled) {
-      deleteAllScores(); // Wipe out Firestore scores collection to implement true reset
+      deleteAllScores();
     }
+    safeStorage.set(UTC_DAY_STORAGE_KEY, todayUtc());
     safeStorage.set('stanbeat_season_ends', newEndTime);
     safeStorage.set('stanbeat_hearts_used', 0);
     set({
       seasonEndsAt: newEndTime,
-      leaderboard: mockLeaderboardBase,
+      leaderboard: [],
+      league: null,
       heartsUsedToday: 0,
     });
-  },
-
-  generateDummyBots: (count) => {
-    const bots: LeaderboardEntry[] = Array.from({ length: count }, (_, idx) => {
-      const sec = 40000 + Math.floor(Math.random() * 20000);
-      return {
-        id: `bot_${Date.now()}_${idx}`,
-        nickname: `BotARMY_${idx + 1}`,
-        country: countries[Math.floor(Math.random() * countries.length)],
-        avatarUrl: `https://picsum.photos/seed/bot-${idx}/80/80`,
-        rank: 0,
-        time: sec,
-        isBot: true,
-      };
-    });
-
-    if (isFirebaseEnabled) {
-      // Actually populate the real global leaderboard for load testing / fake activity
-      bots.forEach((bot) => {
-        saveScore(bot.id, {
-          nickname: bot.nickname,
-          country: bot.country,
-          avatarUrl: bot.avatarUrl,
-          time: bot.time,
-        }).catch(console.error);
-      });
-    }
-
-    const combined = [...get().leaderboard, ...bots]
-      .sort((a, b) => a.time - b.time)
-      .map((entry, idx) => ({ ...entry, rank: idx + 1 }));
-
-    safeStorage.set('stanbeat_leaderboard', combined);
-    set({ leaderboard: combined });
+    // After reset, trigger a fresh league generation if user has a best time
+    get().fetchLeaderboard();
   },
 
   banUser: (id) => {
@@ -764,15 +1338,18 @@ export const useStore = create<AppState>((set, get) => ({
     get().addAdminLog('UNBAN', id);
   },
 
-  editUserHeart: (id, hearts) => {
-    const clampedHearts = Math.max(0, hearts);
+  editUserHeart: (id, hearts, mode = 'SET') => {
+    const currentAdminUser = get().adminUsers.find((entry) => entry.id === id);
+    const currentLeaderboardUser = get().leaderboard.find((entry) => entry.id === id);
+    const currentHearts = Number(currentAdminUser?.hearts ?? currentLeaderboardUser?.hearts ?? (get().currentUser?.id === id ? get().currentUser?.hearts : 0) ?? 0);
+    const clampedHearts = Math.max(0, mode === 'DELTA' ? currentHearts + hearts : hearts);
     if (isFirebaseEnabled) {
       editUserHeartInFirestore(id, clampedHearts);
     }
 
     const user = get().currentUser;
     if (user && user.id === id) {
-      const updatedUser = { ...user, hearts: clampedHearts, expiresAt: null };
+      const updatedUser = { ...user, hearts: clampedHearts };
       safeStorage.set('stanbeat_user', updatedUser);
       set({ currentUser: updatedUser });
     }
@@ -787,33 +1364,22 @@ export const useStore = create<AppState>((set, get) => ({
 
     safeStorage.set('stanbeat_leaderboard', combined);
     set({ leaderboard: combined, adminUsers: updatedAdminUsers });
-    get().addAdminLog('HEART_EDIT', `${id} → ${clampedHearts}`);
+    get().addAdminLog('HEART_EDIT', `${id} -> ${clampedHearts}`);
   },
 
   getReferralLink: () => {
     const user = get().currentUser;
-    const baseUrl = 'https://stanbeat.org';
-    if (!user) return baseUrl;
-    return `${baseUrl}?ref=${user.referralCode}`;
-  },
-
-  toggleAdminRole: () => {
-    const user = get().currentUser;
-    if (!user) return;
-    const nextRole = user.role === 'ADMIN' ? 'USER' : 'ADMIN';
-    const updatedUser = { ...user, role: nextRole as 'USER' | 'ADMIN' };
-
-    if (isFirebaseEnabled) {
-      saveUserProfile(user.id, { role: updatedUser.role }).catch(console.error);
-    }
-
-    safeStorage.set('stanbeat_user', updatedUser);
-    set({ currentUser: updatedUser });
-    console.log(`[Admin] Role toggled to: ${nextRole}`);
+    const baseUrl = getRuntimeSiteUrl();
+    const fandomId = get().activeFandomId;
+    if (!user) return buildFandomUrl(baseUrl, fandomId);
+    return buildFandomUrl(baseUrl, fandomId, { ref: user.referralCode });
   },
 
   fetchAdminData: async () => {
-    if (!isFirebaseEnabled) return;
+    if (!isFirebaseEnabled) {
+      set({ adminUsers: [], adminLoading: false });
+      return;
+    }
     set({ adminLoading: true });
     try {
       const stats = await getGlobalStats();
@@ -824,7 +1390,7 @@ export const useStore = create<AppState>((set, get) => ({
           totalHeartsUsed: Number(stats?.totalHeartsUsed || 0),
           adRevenue: Number(stats?.adRevenue || 0),
         },
-        adminUsers: users,
+        adminUsers: users as unknown as AdminUserRow[],
         adminLoading: false,
       });
     } catch (e) {
@@ -854,85 +1420,125 @@ export const useStore = create<AppState>((set, get) => ({
     set({ adminLog: [...get().adminLog, entry].slice(-50) });
   },
 
-  // ─── Ad System ──────────────────────────────────────────────────
+  // Ad system
   setAdConfig: (partial) => {
     const current = get().adConfig;
     const next = { ...current, ...partial };
     safeStorage.set('stanbeat_ad_config', next);
     set({ adConfig: next });
+    if (isFirebaseEnabled && get().currentUser?.role === 'ADMIN') {
+      saveRemoteAdConfig(next).catch((error) => {
+        console.error('[setAdConfig] Failed to persist remote ad config:', error);
+      });
+    }
   },
 
-  getOfferUrls: () => {
+  claimPendingAdReward: async (rewardId) => {
     const user = get().currentUser;
-    const userId = user?.id || 'guest';
-    return {
-      offerwall: getOfferwallUrl(userId),
-      video: getRewardedVideoUrl(userId),
-    };
-  },
-
-  initAdscendListener: () => {
-    const user = get().currentUser;
-    if (!user) return;
-
-    const existingUnsub = get().rewardListenerUnsubscribe;
-    if (existingUnsub) {
-      existingUnsub();
-      set({ rewardListenerUnsubscribe: null });
+    if (!user || user.banned || !rewardId) {
+      return { claimed: false, grantedHearts: 0 };
     }
 
-    console.log('[Adscend] Initializing reward listener for', user.id);
-    const unsub = listenForRewards(user.id, (reward) => {
-      console.log('[Adscend] 새 보상 수신:', reward);
-      get().addHeart(1);
-      const rewardId = typeof reward === 'object' && reward && 'id' in reward ? String((reward as { id?: unknown }).id ?? '') : '';
-      if (rewardId) {
-        claimRewardInFirestore(rewardId).catch(console.error);
+    if (rewardId.startsWith('local_applixir_')) {
+      const claimed = markLocalApplixirRewardClaimed(user.id, rewardId);
+      if (!claimed) return { claimed: false, grantedHearts: 0 };
+
+      const adConfig = get().adConfig;
+      const nextStreakRaw = Math.max(0, Math.floor(Number(user.rewardedVideoStreak ?? 0))) + 1;
+      const videosPerHeart = Math.max(1, Math.floor(Number(adConfig.videosPerHeart ?? 1)));
+      const grantsReward = nextStreakRaw >= videosPerHeart;
+      const nextStreak = grantsReward ? 0 : nextStreakRaw;
+      const grantedHearts = grantsReward ? Math.max(1, Math.floor(Number(adConfig.rewardedVideoRewardHearts ?? 1))) : 0;
+      const nextUser = {
+        ...user,
+        hearts: Math.min(MAX_HEARTS, user.hearts + grantedHearts),
+        rewardedVideoStreak: nextStreak,
+        gameHistory: grantedHearts > 0
+          ? [...sanitizeHistory(user.gameHistory), { type: 'AD' as const, value: grantedHearts, date: new Date().toISOString() }].slice(-MAX_HISTORY_ITEMS)
+          : sanitizeHistory(user.gameHistory),
+      };
+      const committed = commitUserState(get(), nextUser);
+      set(committed);
+      return { claimed: true, grantedHearts };
+    }
+
+    try {
+      const response = await claimAdRewardRemote(rewardId);
+      if (response.user) {
+        const nextUser = applyServerSnapshotToUser(user, response.user);
+        const committed = commitUserState(get(), nextUser);
+        set(committed);
       }
-    });
-    set({ rewardListenerUnsubscribe: unsub });
+      return {
+        claimed: response.status === 'claimed',
+        grantedHearts: Math.max(0, Number(response.grantedHearts ?? 0)),
+      };
+    } catch (error) {
+      console.error('[claimPendingAdReward] Failed to claim ad reward:', error);
+      return { claimed: false, grantedHearts: 0 };
+    }
   },
 
   watchRewardedAd: async () => {
     const config = get().adConfig;
-    if (!config.rewardedVideo) return false;
+    const testApi = getStanbeatTestApi();
+    if (!config.rewardedVideo) return 'failed';
+    if (!runtimeConfig.capabilities.rewardedVideo && !testApi?.rewardedVideo?.showRewardedVideo) {
+      get().showRewardToast(getRewardedAdFailureMessage(get().language, 'configMissing'));
+      return 'failed';
+    }
 
-    return new Promise<boolean>((resolve) => {
-      const user = get().currentUser;
-      if (!user || user.banned) { resolve(false); return; }
-      const heartsReward = Math.max(1, Math.min(MAX_HEARTS, Math.floor(config.rewardedVideoRewardHearts)));
+    const user = get().currentUser;
+    if (!user || user.banned) return 'failed';
+    const userId = user.id;
+    const rewardWindowStartedAt = Date.now();
 
-      const nextCount = get().videoWatchCount + 1;
+    // Actually show the AppLixir rewarded video
+    // This opens the ad player in a popup. Must be called from a user gesture.
+    let adResult: 'completed' | 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig';
+    try {
+      adResult = await applixirProvider.showRewardedVideo(userId);
+    } catch (err) {
+      console.error('[store] Applixir showRewardedVideo error:', err);
+      return 'failed';
+    }
 
-      if (nextCount >= config.videosPerHeart) {
-        // Reset count and grant heart
-        const normalized = normalizeHearts(user);
-        const record: HistoryEvent = { type: 'AD', value: heartsReward, date: new Date().toISOString() };
-        const updatedUser = {
-          ...normalized,
-          hearts: Math.min(normalized.hearts + heartsReward, MAX_HEARTS),
-          expiresAt: null,
-          gameHistory: [...normalized.gameHistory, record].slice(-MAX_HISTORY_ITEMS),
-        };
-        const newRevenue = get().adRevenue + 0.35;
-        safeStorage.set('stanbeat_user', updatedUser);
-        safeStorage.set('stanbeat_ad_revenue', newRevenue);
-        set({ adRevenue: newRevenue, currentUser: updatedUser, videoWatchCount: 0 });
-        resolve(true);
-      } else {
-        // Just increment count
-        set({ videoWatchCount: nextCount });
-        resolve(false); // Signal that heart wasn't granted yet
+    if (adResult !== 'completed') {
+      console.warn(`[store] Rewarded video not completed: ${adResult}`);
+      get().showRewardToast(getRewardedAdFailureMessage(get().language, adResult));
+      return 'failed';
+    }
+
+    if (import.meta.env.DEV && !getStanbeatTestApi()) {
+      recordLocalApplixirReward(user.id);
+    }
+
+    pendingRewardedVideoWaitUserId = user.id;
+    try {
+      const rewardDoc = await waitForApplixirReward(user.id, rewardWindowStartedAt, 90000);
+      if (!rewardDoc) {
+        get().showRewardToast(getRewardValidationMessage(get().language, 'timeout'));
+        return 'failed';
       }
-    });
-  },
 
-  completeOfferwall: async () => {
-    const config = get().adConfig;
-    if (!config.offerwall) return false;
-
-    // Real offerwall rewards are handled by initAdscendListener + Firestore S2S Postback
-    // This function can be used to trigger an immediate check or analytics
-    return true;
+      const rewardResult = await get().claimPendingAdReward(rewardDoc.id);
+      return rewardResult.grantedHearts > 0 ? 'rewarded' : 'progressed';
+    } finally {
+      if (pendingRewardedVideoWaitUserId === user.id) {
+        pendingRewardedVideoWaitUserId = null;
+      }
+    }
   },
 }));
+
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  (window as Window & { __STANBEAT_STORE__?: typeof useStore }).__STANBEAT_STORE__ = useStore;
+}
+
+if (typeof window !== 'undefined') {
+  const urlFandomId = new URLSearchParams(window.location.search).get('fandom');
+  const resolvedUrlFandomId = resolveFandomId(urlFandomId);
+  if (urlFandomId && useStore.getState().activeFandomId !== resolvedUrlFandomId) {
+    useStore.setState({ activeFandomId: resolvedUrlFandomId });
+  }
+}

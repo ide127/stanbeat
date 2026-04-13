@@ -5,8 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "node scripts/generate-public-seo.js && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "check:locales": "node scripts/check-locales-health.js",
+    "update:locales": "node scripts/update-locales.js",
+    "generate:seo": "node scripts/generate-public-seo.js",
+    "check:quality": "npm run check:locales && npm run typecheck && npm --prefix functions run build && npm run build",
+    "verify:expect": "node scripts/run-expect-harness.mjs",
+    "verify:applixir": "npx -y tsx scripts/verify-applixir-events.mjs",
+    "verify:league": "npx -y tsx scripts/verify-league-refresh.mjs",
+    "verify:harness": "npm run check:quality && npm run verify:expect && npm run verify:fandom && npm run verify:applixir && npm run verify:league && npm run verify:gameplay",
+    "verify:gameplay": "node scripts/verify-gameplay-harness.mjs",
+    "verify:fandom": "npx -y tsx scripts/verify-fandom-config.mjs && node scripts/verify-fandom-content.mjs && node scripts/verify-fandom-browser.mjs"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
@@ -19,7 +30,10 @@
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
+    "expect-cli": "^0.1.3",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

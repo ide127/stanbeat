@@ -1,5 +1,14 @@
 {
   "name": "StanBeat",
-  "description": "The ultimate K-Pop fandom quiz platform. Solve puzzles, earn hearts, and compete for a ticket to Seoul!",
-  "requestFramePermissions": []
+  "description": "The K-pop and K-culture fandom challenge platform. Choose your fandom, solve puzzles, earn hearts, and compete for a Korea trip.",
+  "requestFramePermissions": [
+    "https://imasdk.googleapis.com",
+    "https://securepubads.g.doubleclick.net",
+    "https://googleads.g.doubleclick.net",
+    "https://td.doubleclick.net",
+    "https://sdk.privacy-center.org",
+    "https://s3.us-east-1.amazonaws.com",
+    "https://cdn.applixir.com",
+    "https://www.google.com"
+  ]
 }

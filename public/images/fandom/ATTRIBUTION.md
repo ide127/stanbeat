@@ -1,0 +1,62 @@
+﻿# Fandom Image Attribution
+
+- le-sserafim: Le_Sserafim_at_2026_Golden_Disc_awards.png
+  - Artist: https://www.youtube.com/@_TV10
+  - License: CC BY 4.0
+  - Source: https://commons.wikimedia.org/wiki/File:Le_Sserafim_at_2026_Golden_Disc_awards.png
+  - Local file: /images/fandom/le-sserafim.png
+- ateez: ATEEZ_in_August_2024_(cropped).jpg
+  - Artist: pinkllamanade
+  - License: CC BY-SA 2.0
+  - Source: https://commons.wikimedia.org/wiki/File:ATEEZ_in_August_2024_(cropped).jpg
+  - Local file: /images/fandom/ateez.jpg
+- aespa: 241005_aespa_K-Link_Festival_(cropped).jpg
+  - Artist: plumflower snow
+  - License: CC BY-SA 2.0
+  - Source: https://commons.wikimedia.org/wiki/File:241005_aespa_K-Link_Festival_(cropped).jpg
+  - Local file: /images/fandom/aespa.jpg
+- enhypen: Enhypen_at_Golden_disc_awards.png
+  - Artist: https://www.youtube.com/@_TV10
+  - License: CC BY 3.0
+  - Source: https://commons.wikimedia.org/wiki/File:Enhypen_at_Golden_disc_awards.png
+  - Local file: /images/fandom/enhypen.png
+- blackpink: 20240809_Blackpink_Pink_Carpet_09.png
+  - Artist: 티비텐 TV10
+  - License: CC BY 3.0
+  - Source: https://commons.wikimedia.org/wiki/File:20240809_Blackpink_Pink_Carpet_09.png
+  - Local file: /images/fandom/blackpink.png
+- gidle: 20241130_(G)I-dle_MMA_2024_Red_Carpet.jpg
+  - Artist: 티비텐 TV10
+  - License: CC BY 3.0
+  - Source: https://commons.wikimedia.org/wiki/File:20241130_(G)I-dle_MMA_2024_Red_Carpet.jpg
+  - Local file: /images/fandom/gidle.jpg
+- seventeen: Seventeen_Carat_Land_24.jpg
+  - Artist: Seventeen
+  - License: CC BY 3.0
+  - Source: https://commons.wikimedia.org/wiki/File:Seventeen_Carat_Land_24.jpg
+  - Local file: /images/fandom/seventeen.jpg
+- ive: Ive_at_the_40th_Golden_Disc_Awards,_January_10,_2026_(2).png
+  - Artist: 티비텐 TV10
+  - License: CC BY 4.0
+  - Source: https://commons.wikimedia.org/wiki/File:Ive_at_the_40th_Golden_Disc_Awards,_January_10,_2026_(2).png
+  - Local file: /images/fandom/ive.png
+- stray-kids: Stray_Kids_at_the_40th_Golden_Disc_Awards,_January_10,_2026_(1).png
+  - Artist: 티비텐 TV10
+  - License: CC BY 4.0
+  - Source: https://commons.wikimedia.org/wiki/File:Stray_Kids_at_the_40th_Golden_Disc_Awards,_January_10,_2026_(1).png
+  - Local file: /images/fandom/stray-kids.png
+- newjeans: NewJeans_2023_MelonMusicAwards_composite.jpg
+  - Artist: TenAsia
+  - License: CC BY 3.0
+  - Source: https://commons.wikimedia.org/wiki/File:NewJeans_2023_MelonMusicAwards_composite.jpg
+  - Local file: /images/fandom/newjeans.jpg
+- twice: Twice_-_Dickies_Arena,_2022_(cropped).jpg
+  - Artist: Steven Anthony Hammock
+  - License: CC BY-SA 4.0
+  - Source: https://commons.wikimedia.org/wiki/File:Twice_-_Dickies_Arena,_2022_(cropped).jpg
+  - Local file: /images/fandom/twice.jpg
+- bts: BTS_during_a_White_House_press_conference_May_31,_2022_(cropped).jpg
+  - Artist: The White House
+  - License: Public domain
+  - Source: https://commons.wikimedia.org/wiki/File:BTS_during_a_White_House_press_conference_May_31,_2022_(cropped).jpg
+  - Local file: /images/fandom/bts.jpg

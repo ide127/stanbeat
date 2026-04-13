@@ -1,0 +1,5 @@
+interface:
+  display_name: "Harness Engineering"
+  short_description: "End-to-end autonomous development with verification loops."
+policy:
+  allow_implicit_invocation: true
