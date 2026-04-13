@@ -40,6 +40,9 @@ interface ApplixirOptions {
 }
 
 type RewardedVideoResult = 'completed' | 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig';
+interface RewardedVideoCallbacks {
+    onPlaybackStarted?: () => void;
+}
 
 const APPLIXIR_CONTAINER_ID = 'applixir_vanishing_div';
 const APPLIXIR_SCRIPT_SRC = runtimeConfig.applixir.scriptSrc;
@@ -56,6 +59,7 @@ const NO_FILL_ERROR_TYPES = new Set([
 ]);
 
 const PROGRESS_STATUSES = new Set(['loaded', 'start', 'started', 'firstquartile', 'midpoint', 'thirdquartile', 'paused', 'click']);
+const PLAYBACK_STARTED_STATUSES = new Set(['start', 'started', 'firstquartile', 'midpoint', 'thirdquartile']);
 const INITIAL_PLAYER_TIMEOUT_MS = 30000;
 const ACTIVE_PLAYER_TIMEOUT_MS = 45000;
 
@@ -92,10 +96,10 @@ export class ApplixirProvider {
         });
     }
 
-    async showRewardedVideo(userId: string): Promise<RewardedVideoResult> {
+    async showRewardedVideo(userId: string, callbacks: RewardedVideoCallbacks = {}): Promise<RewardedVideoResult> {
         const override = getStanbeatTestApi()?.rewardedVideo?.showRewardedVideo;
         if (override) {
-            return await override(userId);
+            return await override(userId, callbacks);
         }
 
         if (!runtimeConfig.capabilities.rewardedVideo) {
@@ -135,6 +139,7 @@ export class ApplixirProvider {
             let settled = false;
             const playbackState = createApplixirPlaybackState();
             let timeout = 0;
+            let playbackStartedNotified = false;
 
             const armTimeout = (delayMs: number) => {
                 window.clearTimeout(timeout);
@@ -166,6 +171,10 @@ export class ApplixirProvider {
 
                     if (PROGRESS_STATUSES.has(statusType)) {
                         armTimeout(ACTIVE_PLAYER_TIMEOUT_MS);
+                    }
+                    if (!playbackStartedNotified && PLAYBACK_STARTED_STATUSES.has(statusType)) {
+                        playbackStartedNotified = true;
+                        callbacks.onPlaybackStarted?.();
                     }
 
                     const decision = applyApplixirStatus(playbackState, status);

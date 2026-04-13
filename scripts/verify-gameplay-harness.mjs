@@ -142,10 +142,11 @@ function buildInitScript() {
         },
       },
       rewardedVideo: {
-        showRewardedVideo: async (userId) => {
+        showRewardedVideo: async (userId, callbacks) => {
           if (userId !== applixirUserId) {
             throw new Error('Expected AppLixir userId UUID, got ' + userId);
           }
+          callbacks?.onPlaybackStarted?.();
           return 'completed';
         },
         waitForReward: async () => ({
@@ -329,10 +330,12 @@ async function main() {
             throw new Error('window.__STANBEAT_STORE__ is not available for the rewarded-video test');
           }
           store.getState().setView('HOME');
-          const result = await store.getState().watchRewardedAd();
+          const phases = [];
+          const result = await store.getState().watchRewardedAd({ onPhase: (phase) => phases.push(phase) });
           const nextState = store.getState();
           return {
             result,
+            phases,
             hearts: nextState.currentUser?.hearts ?? null,
             historyTypes: nextState.currentUser?.gameHistory?.map((entry) => entry.type) ?? [],
           };
@@ -348,6 +351,11 @@ async function main() {
     }
     if (!rewardData.historyTypes.includes('AD')) {
       throw new Error(`Expected AD history to be recorded after rewarded video, got ${JSON.stringify(rewardData.historyTypes)}`);
+    }
+    for (const phase of ['loading', 'watching', 'validating']) {
+      if (!rewardData.phases.includes(phase)) {
+        throw new Error(`Expected rewarded video phase '${phase}', got ${JSON.stringify(rewardData.phases)}`);
+      }
     }
 
     const consoleErrors = extractText(await callTool(port, 'console_logs', { type: 'error' }));

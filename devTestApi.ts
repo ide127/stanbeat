@@ -54,7 +54,10 @@ export interface StanbeatTestApi {
     claimAdReward?: (rewardId: string) => Promise<TestClaimAdRewardResponse> | TestClaimAdRewardResponse;
   };
   rewardedVideo?: {
-    showRewardedVideo?: (userId: string) => Promise<'completed' | 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig'> | 'completed' | 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig';
+    showRewardedVideo?: (
+      userId: string,
+      callbacks?: { onPlaybackStarted?: () => void },
+    ) => Promise<'completed' | 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig'> | 'completed' | 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig';
     waitForReward?: (
       userId: string,
       type: string,

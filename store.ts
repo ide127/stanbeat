@@ -45,6 +45,11 @@ export interface AdConfig {
   rewardedVideoRewardHearts: number; // 동영상 보상 하트 수
   videosPerHeart: number;       // 하트 1개를 얻기 위해 시청해야 할 동영상 수
 }
+export type RewardedAdFlowPhase = 'loading' | 'watching' | 'validating';
+
+export interface RewardedAdFlowCallbacks {
+  onPhase?: (phase: RewardedAdFlowPhase) => void;
+}
 
 const DEFAULT_AD_CONFIG: AdConfig = {
   rewardedVideo: true,
@@ -203,7 +208,7 @@ interface AppState {
   hydrateOperationalState: () => Promise<void>;
   syncSeasonClock: () => void;
   claimPendingAdReward: (rewardId: string) => Promise<{ claimed: boolean; grantedHearts: number }>;
-  watchRewardedAd: () => Promise<'rewarded' | 'progressed' | 'failed'>;
+  watchRewardedAd: (callbacks?: RewardedAdFlowCallbacks) => Promise<'rewarded' | 'progressed' | 'failed'>;
 }
 
 const adjectives = ['Lovely', 'Shiny', 'Happy', 'Bright', 'Neon', 'Cute', 'Royal'];
@@ -1485,7 +1490,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  watchRewardedAd: async () => {
+  watchRewardedAd: async (callbacks = {}) => {
     const config = get().adConfig;
     const testApi = getStanbeatTestApi();
     if (!config.rewardedVideo) return 'failed';
@@ -1498,12 +1503,15 @@ export const useStore = create<AppState>((set, get) => ({
     if (!user || user.banned) return 'failed';
     const userId = user.id;
     const rewardWindowStartedAt = Date.now();
+    callbacks.onPhase?.('loading');
 
     // Actually show the AppLixir rewarded video
     // This opens the ad player in a popup. Must be called from a user gesture.
     let adResult: 'completed' | 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig';
     try {
-      adResult = await applixirProvider.showRewardedVideo(user.applixirUserId);
+      adResult = await applixirProvider.showRewardedVideo(user.applixirUserId, {
+        onPlaybackStarted: () => callbacks.onPhase?.('watching'),
+      });
     } catch (err) {
       console.error('[store] Applixir showRewardedVideo error:', err);
       return 'failed';
@@ -1519,6 +1527,7 @@ export const useStore = create<AppState>((set, get) => ({
       recordLocalApplixirReward(user.id);
     }
 
+    callbacks.onPhase?.('validating');
     pendingRewardedVideoWaitUserId = user.id;
     try {
       const rewardDoc = await waitForApplixirReward(user.id, rewardWindowStartedAt, 90000);

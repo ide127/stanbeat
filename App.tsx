@@ -2552,7 +2552,7 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   } = useStore();
   const [seconds, setSeconds] = useState(() => Math.floor(getMsUntilNextUtcMidnight() / 1000));
   const [linkCopied, setLinkCopied] = useState(false);
-  const [adLoading, setAdLoading] = useState(false);
+  const [adFlowPhase, setAdFlowPhase] = useState<'idle' | 'loading' | 'watching' | 'validating'>('idle');
   const [showQuiz, setShowQuiz] = useState(false);
 
   useEffect(() => {
@@ -2568,17 +2568,31 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   const ss = String(seconds % 60).padStart(2, '0');
   const isDailyHeartReady = currentUser ? currentUser.lastDailyHeart !== new Date().toISOString().slice(0, 10) : false;
   const activeFandom = getFandomPack(activeFandomId);
+  const isAdBusy = adFlowPhase !== 'idle';
+  const adStatusText = adFlowPhase === 'validating'
+    ? t(language, 'rewardValidationPending')
+    : adFlowPhase === 'watching'
+      ? t(language, 'adVideoHint')
+      : adFlowPhase === 'loading'
+        ? t(language, 'loadingAd')
+        : null;
+
+  useEffect(() => {
+    if (!isOpen) {
+      setAdFlowPhase('idle');
+      setShowQuiz(false);
+    }
+  }, [isOpen]);
 
   const startAdFlow = async () => {
-    setAdLoading(true);
-    // 광고 재생 전에 모달을 닫아서 Applixir 비디오가 전체화면으로 보이게 함
-    // The Applixir SDK injects a video into #applixir_vanishing_div (z-index:99999)
-    // but our Modal has a backdrop - closing it ensures nothing covers the video.
-    onClose();
+    if (isAdBusy) return;
+    setAdFlowPhase('loading');
     try {
-      const rewardState = await watchRewardedAd();
+      const rewardState = await watchRewardedAd({ onPhase: setAdFlowPhase });
       if (rewardState === 'rewarded') {
         useStore.getState().showRewardToast(t(language, 'heartEarned'));
+        setAdFlowPhase('idle');
+        onClose();
       } else if (rewardState === 'progressed') {
         const { videoWatchCount: nextWatchCount, adConfig: nextAdConfig } = useStore.getState();
         useStore.getState().showRewardToast(t(language, 'videoProgress', {
@@ -2586,17 +2600,20 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
           total: String(nextAdConfig.videosPerHeart),
           reward: String(nextAdConfig.rewardedVideoRewardHearts),
         }));
+        setAdFlowPhase('idle');
+      } else {
+        setAdFlowPhase('idle');
       }
     } catch (err) {
       console.error('[HeartsModal] Ad error:', err);
-    } finally {
-      setAdLoading(false);
+      setAdFlowPhase('idle');
     }
   };
 
   const handleWatchAd = () => {
     vibrate();
     // 20% chance to show anti-bot quiz
+    if (isAdBusy) return;
     if (Math.random() < 0.2) {
       setShowQuiz(true);
     } else {
@@ -2643,7 +2660,7 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={t(language, 'heartsTitle')}>
+    <Modal isOpen={isOpen} onClose={() => { if (!isAdBusy) onClose(); }} title={t(language, 'heartsTitle')}>
       <div className="space-y-3">
         <p className="text-white/70 text-xs">
           {isDailyHeartReady
@@ -2655,19 +2672,26 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
           <div className="space-y-1">
             <button
               onClick={handleWatchAd}
-              disabled={adLoading}
+              disabled={isAdBusy}
               className="w-full rounded-xl p-3 bg-[#00FFFF] text-black font-bold flex items-center justify-center gap-2 btn-squishy disabled:opacity-50"
             >
-              {adLoading ? (
+              {isAdBusy ? (
                 <span className="inline-block w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
               ) : (
                 <Video size={18} />
               )}
-              {adLoading
+              {adFlowPhase === 'validating'
+                ? t(language, 'rewardValidationPending')
+                : isAdBusy
                 ? t(language, 'loadingAd')
                 : t(language, 'watchAd')}
             </button>
             <div className="flex flex-col items-center">
+              {adStatusText && (
+                <p className="text-[12px] text-white/75 mt-2 text-center leading-relaxed">
+                  {adStatusText}
+                </p>
+              )}
               <p className="text-[12px] text-[#00FFFF] mt-1 font-semibold">
                 {t(language, 'videoProgress', {
                   current: String(Math.min(videoWatchCount, adConfig.videosPerHeart)),
