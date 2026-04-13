@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/generate-public-seo.js && vite build",
+    "build": "node scripts/check-build-env.js && node scripts/generate-public-seo.js && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "check:locales": "node scripts/check-locales-health.js",

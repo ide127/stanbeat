@@ -45,6 +45,17 @@ StanBeat now uses two explicit runtime modes.
 - `VITE_APPLIXIR_SCRIPT_SRC`
   Defaults to `/lib/player.js`.
 
+### Cloudflare Pages
+
+Cloudflare Pages does not read your local `.env` file during Git deployments. Add the frontend variables above in the Cloudflare Pages dashboard under Project > Settings > Environment variables, scoped to Production. At minimum, production must include:
+
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_APP_ID`
+- `VITE_APPLIXIR_API_KEY`
+
+`VITE_APPLIXIR_API_KEY` is a frontend build variable and is visible in the built app, which matches the AppLixir browser integration model. Do not put `APPLIXIR_CALLBACK_SECRET` in frontend variables; keep it only in Firebase Functions / server-side secret storage.
+
 ## Server Secrets
 
 Keep callback secrets on the server only.
