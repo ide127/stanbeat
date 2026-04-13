@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { LEAGUE_REFRESH_INTERVAL_MS, refreshLeagueIfNeeded } from '../league.ts';
 
 const now = Date.now();
+const runtimeConfig = {
+  botTimeMean: 50000,
+  botTimeStdDev: 1,
+  overtakeGapMin: 100,
+  overtakeGapMax: 500,
+};
 const current = {
   leagueId: 'league-test',
   displayName: 'Test League',
@@ -62,12 +68,7 @@ const refreshed = refreshLeagueIfNeeded(
   'RealUser',
   'KR',
   '',
-  {
-    botTimeMean: 50000,
-    botTimeStdDev: 1,
-    overtakeGapMin: 100,
-    overtakeGapMax: 500,
-  },
+  runtimeConfig,
 );
 
 assert.ok(refreshed, 'league refresh should return a league');
@@ -84,6 +85,37 @@ assert.deepEqual(
   new Set(refreshed.entries.filter((entry) => !entry.isCurrentUser).map((entry) => entry.id)),
   new Set(['bot-a', 'bot-b', 'bot-c']),
   'refresh should keep the same league members',
+);
+
+const recentNewBest = refreshLeagueIfNeeded(
+  { ...current, lastRefresh: now, userBestAtGeneration: 2000 },
+  1700,
+  'real-user',
+  'RealUser',
+  'KR',
+  '',
+  runtimeConfig,
+);
+const recentNewBestUser = recentNewBest?.entries.find((entry) => entry.isCurrentUser);
+assert.ok(recentNewBestUser, 'recent new best should keep the current user');
+assert.equal(recentNewBestUser.time, 1700, 'new best refresh should preserve exact user record');
+assert.equal(recentNewBestUser.rank, 1, 'new best before the 10-minute refresh should not trigger a forced overtake');
+
+const firstLeague = refreshLeagueIfNeeded(
+  null,
+  24000,
+  'real-user',
+  'RealUser',
+  'KR',
+  '',
+  runtimeConfig,
+);
+const firstLeagueUser = firstLeague?.entries.find((entry) => entry.isCurrentUser);
+assert.ok(firstLeagueUser, 'first league should include the current user');
+assert.equal(firstLeagueUser.time, 24000, 'initial league generation must not rewrite the user record');
+assert.ok(
+  firstLeague.entries.every((entry) => entry.isCurrentUser || Math.abs(entry.time - firstLeagueUser.time) <= 15000),
+  'synthetic records should stay close enough to feel beatable',
 );
 
 console.log('verify-league-refresh: passed');

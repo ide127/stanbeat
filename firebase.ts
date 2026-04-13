@@ -54,6 +54,7 @@ export interface ServerUserSnapshot {
   hearts: number;
   bestTime: number | null;
   lastDailyHeart: string | null;
+  nextFreeHeartAt: string | null;
   gameHistory: HistoryEvent[];
   rewardedVideoStreak: number;
   referralRewardGranted: boolean;
@@ -65,8 +66,9 @@ export interface ConsumeHeartForGameResponse {
 }
 
 export interface ClaimDailyHeartResponse {
-  status: 'claimed' | 'already_claimed' | 'banned';
+  status: 'claimed' | 'already_claimed' | 'max_hearts' | 'banned';
   user?: ServerUserSnapshot;
+  nextFreeHeartAt?: string | null;
 }
 
 export interface SubmitPlayResultResponse {
@@ -80,6 +82,7 @@ export interface ClaimAdRewardResponse {
   status: 'claimed' | 'already_claimed' | 'forbidden' | 'not_found' | 'banned';
   user?: ServerUserSnapshot;
   grantedHearts?: number;
+  rewardCapped?: boolean;
 }
 
 const sanitizeHistory = (history: unknown): HistoryEvent[] => {
@@ -102,6 +105,7 @@ const parseSnapshot = (value: unknown): ServerUserSnapshot => {
     hearts: Math.max(0, Number(data.hearts ?? 0)),
     bestTime,
     lastDailyHeart: typeof data.lastDailyHeart === 'string' ? data.lastDailyHeart : null,
+    nextFreeHeartAt: typeof data.nextFreeHeartAt === 'string' ? data.nextFreeHeartAt : null,
     gameHistory: sanitizeHistory(data.gameHistory),
     rewardedVideoStreak: Math.max(0, Number(data.rewardedVideoStreak ?? 0)),
     referralRewardGranted: Boolean(data.referralRewardGranted),
@@ -292,6 +296,7 @@ export async function claimDailyHeartRemote(): Promise<ClaimDailyHeartResponse> 
   return {
     status: String(data.status ?? 'banned') as ClaimDailyHeartResponse['status'],
     user: data.user ? parseSnapshot(data.user) : undefined,
+    nextFreeHeartAt: typeof data.nextFreeHeartAt === 'string' ? data.nextFreeHeartAt : null,
   };
 }
 
@@ -319,6 +324,7 @@ export async function claimAdRewardRemote(rewardId: string): Promise<ClaimAdRewa
     status: String(data.status ?? 'not_found') as ClaimAdRewardResponse['status'],
     user: data.user ? parseSnapshot(data.user) : undefined,
     grantedHearts: Number(data.grantedHearts ?? 0),
+    rewardCapped: Boolean(data.rewardCapped),
   };
 }
 

@@ -62,12 +62,20 @@ Keep callback secrets on the server only.
 
 - `APPLIXIR_CALLBACK_SECRET`
 
+Set it with Firebase Secret Manager:
+
+```bash
+firebase functions:secrets:set APPLIXIR_CALLBACK_SECRET --project stanbeat-78d0b
+firebase deploy --only functions:applixirCallback --project stanbeat-78d0b
+```
+
 ## AppLixir Web Callback
 
 - Firebase Function callback URL:
   `https://us-central1-stanbeat-78d0b.cloudfunctions.net/applixirCallback`
 - Dashboard setup:
   Put the callback URL above into AppLixir and use the same secret value configured in Functions.
+  Use a reward/completion callback mode, keep the time between callbacks at or below the app's 90-second reward wait window, and set daily reward caps high enough for test traffic.
 - Development:
   You can keep `VITE_APPLIXIR_SERVER_VALIDATION=true` locally as long as the callback points to a deployed public function that AppLixir can reach.
 - Verification:

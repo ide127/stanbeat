@@ -2550,23 +2550,27 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
     currentUser, claimDailyHeart, language, getReferralLink, showRewardToast,
     adConfig, watchRewardedAd, videoWatchCount, activeFandomId
   } = useStore();
-  const [seconds, setSeconds] = useState(() => Math.floor(getMsUntilNextUtcMidnight() / 1000));
+  const [seconds, setSeconds] = useState(0);
   const [linkCopied, setLinkCopied] = useState(false);
   const [adFlowPhase, setAdFlowPhase] = useState<'idle' | 'loading' | 'watching' | 'validating'>('idle');
   const [showQuiz, setShowQuiz] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
-    const updateCountdown = () => setSeconds(Math.max(0, Math.floor(getMsUntilNextUtcMidnight() / 1000)));
+    const updateCountdown = () => {
+      const nextFreeHeartMs = currentUser?.nextFreeHeartAt ? Date.parse(currentUser.nextFreeHeartAt) : 0;
+      setSeconds(Math.max(0, Math.floor((nextFreeHeartMs - Date.now()) / 1000)));
+    };
     updateCountdown();
     const timer = setInterval(updateCountdown, 1000);
     return () => clearInterval(timer);
-  }, [isOpen]);
+  }, [currentUser?.nextFreeHeartAt, isOpen]);
 
   const hh = String(Math.floor(seconds / 3600)).padStart(2, '0');
   const mm = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
   const ss = String(seconds % 60).padStart(2, '0');
-  const isDailyHeartReady = currentUser ? currentUser.lastDailyHeart !== new Date().toISOString().slice(0, 10) : false;
+  const nextFreeHeartMs = currentUser?.nextFreeHeartAt ? Date.parse(currentUser.nextFreeHeartAt) : 0;
+  const isDailyHeartReady = Boolean(currentUser && currentUser.hearts < 3 && (!nextFreeHeartMs || Date.now() >= nextFreeHeartMs));
   const activeFandom = getFandomPack(activeFandomId);
   const isAdBusy = adFlowPhase !== 'idle';
   const adStatusText = adFlowPhase === 'validating'
@@ -2593,6 +2597,9 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
         useStore.getState().showRewardToast(t(language, 'heartEarned'));
         setAdFlowPhase('idle');
         onClose();
+      } else if (rewardState === 'capped') {
+        useStore.getState().showRewardToast(t(language, 'maxHeartsReached'));
+        setAdFlowPhase('idle');
       } else if (rewardState === 'progressed') {
         const { videoWatchCount: nextWatchCount, adConfig: nextAdConfig } = useStore.getState();
         useStore.getState().showRewardToast(t(language, 'videoProgress', {
@@ -2652,7 +2659,11 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
     vibrate();
     try {
       const claimed = await claimDailyHeart();
-      showRewardToast(t(language, claimed ? 'dailyHeartClaimed' : 'dailyHeartAlreadyClaimed'));
+      showRewardToast(t(language, claimed === 'claimed'
+        ? 'dailyHeartClaimed'
+        : claimed === 'max_hearts'
+          ? 'maxHeartsReached'
+          : 'dailyHeartAlreadyClaimed'));
     } catch (error) {
       const message = error instanceof Error ? error.message : t(language, 'serverTimeError');
       showRewardToast(message);
@@ -2665,7 +2676,9 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
         <p className="text-white/70 text-xs">
           {isDailyHeartReady
             ? t(language, 'dailyHeartReady')
-            : t(language, 'dailyHeartCountdown', { time: `${hh}:${mm}:${ss}` })}
+            : currentUser && currentUser.hearts >= 3
+              ? t(language, 'maxHeartsReached')
+              : t(language, 'loginHeartCountdown', { time: `${hh}:${mm}:${ss}` })}
         </p>
 
         {adConfig.rewardedVideo && (

@@ -179,7 +179,7 @@ interface AppState {
   restoreSessionFromAuth: (authUser: FirebaseUser) => Promise<void>;
   logout: () => void;
   startGame: () => Promise<'started' | 'needs_login' | 'needs_terms' | 'needs_hearts' | 'blocked'>;
-  claimDailyHeart: () => Promise<boolean>;
+  claimDailyHeart: () => Promise<'claimed' | 'already_claimed' | 'max_hearts'>;
 
   recordCompletedPlay: (time: number) => Promise<boolean>;
   addHistoryEvent: (type: 'PLAY' | 'AD' | 'INVITE' | 'DAILY' | 'CANCELLED', value: number) => void;
@@ -208,13 +208,14 @@ interface AppState {
   hydrateOperationalState: () => Promise<void>;
   syncSeasonClock: () => void;
   claimPendingAdReward: (rewardId: string) => Promise<{ claimed: boolean; grantedHearts: number }>;
-  watchRewardedAd: (callbacks?: RewardedAdFlowCallbacks) => Promise<'rewarded' | 'progressed' | 'failed'>;
+  watchRewardedAd: (callbacks?: RewardedAdFlowCallbacks) => Promise<'rewarded' | 'progressed' | 'capped' | 'failed'>;
 }
 
 const adjectives = ['Lovely', 'Shiny', 'Happy', 'Bright', 'Neon', 'Cute', 'Royal'];
 const favorites = ['Idol', 'Stage', 'Seoul', 'Hallyu', 'Dance', 'Drama', 'KPop'];
 const MAX_HEARTS = 3;
 const MAX_HISTORY_ITEMS = 100;
+const FREE_HEART_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 let rewardToastTimeout: ReturnType<typeof setTimeout> | null = null;
 let pendingRewardedVideoWaitUserId: string | null = null;
@@ -312,10 +313,18 @@ const applyServerSnapshotToUser = (user: User, snapshot: ServerUserSnapshot): Us
   hearts: snapshot.hearts,
   bestTime: snapshot.bestTime,
   lastDailyHeart: snapshot.lastDailyHeart,
+  nextFreeHeartAt: snapshot.nextFreeHeartAt,
   gameHistory: sanitizeHistory(snapshot.gameHistory),
   rewardedVideoStreak: snapshot.rewardedVideoStreak,
   referralRewardGranted: snapshot.referralRewardGranted,
 });
+
+const getNextFreeHeartAt = (lastFreeHeart: string | null): string | null => {
+  if (!lastFreeHeart) return null;
+  const lastMs = Date.parse(lastFreeHeart);
+  if (!Number.isFinite(lastMs)) return null;
+  return new Date(lastMs + FREE_HEART_INTERVAL_MS).toISOString();
+};
 
 const getRewardedAdFailureMessage = (lang: LanguageCode, result: 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig') => {
   if (lang === 'ko') {
@@ -552,6 +561,7 @@ const buildUserFromAuth = async (
     referralRewardGranted: false,
     rewardedVideoStreak: 0,
     applixirUserId: resolveApplixirUserId(),
+    nextFreeHeartAt: null,
   };
 
   const mergedProfile = fbProfile ?? {};
@@ -569,6 +579,7 @@ const buildUserFromAuth = async (
   user.referralRewardGranted = Boolean(mergedProfile.referralRewardGranted ?? existingUser?.referralRewardGranted ?? user.referralRewardGranted);
   user.rewardedVideoStreak = Math.max(0, Number(mergedProfile.rewardedVideoStreak ?? existingUser?.rewardedVideoStreak ?? user.rewardedVideoStreak));
   if (mergedProfile.lastDailyHeart) user.lastDailyHeart = String(mergedProfile.lastDailyHeart);
+  user.nextFreeHeartAt = getNextFreeHeartAt(user.lastDailyHeart);
   if (mergedProfile.role) user.role = mergedProfile.role as 'USER' | 'ADMIN';
   if (mergedProfile.banned !== undefined) user.banned = Boolean(mergedProfile.banned);
 
@@ -583,6 +594,7 @@ const buildUserFromAuth = async (
     user.rewardedVideoStreak = Math.max(0, Number(existingUser.rewardedVideoStreak ?? 0));
     user.applixirUserId = resolveApplixirUserId(existingUser.applixirUserId, user.applixirUserId);
     user.lastDailyHeart = existingUser.lastDailyHeart;
+    user.nextFreeHeartAt = existingUser.nextFreeHeartAt ?? getNextFreeHeartAt(user.lastDailyHeart);
     user.banned = existingUser.banned;
   }
 
@@ -664,6 +676,7 @@ export const useStore = create<AppState>((set, get) => ({
     referralRewardGranted: Boolean(savedUser.referralRewardGranted),
     rewardedVideoStreak: Math.max(0, Number(savedUser.rewardedVideoStreak ?? 0)),
     applixirUserId: resolveApplixirUserId(savedUser.applixirUserId),
+    nextFreeHeartAt: savedUser.nextFreeHeartAt ?? getNextFreeHeartAt(savedUser.lastDailyHeart),
   } : null,
   currentView: 'HOME',
   activeFandomId: readStoredFandomId(),
@@ -965,6 +978,16 @@ export const useStore = create<AppState>((set, get) => ({
 
       await persistUserProfileRemote(user, useBootstrapPayload);
 
+      if (user.hearts < MAX_HEARTS) {
+        get().claimDailyHeart()
+          .then((status) => {
+            if (status === 'claimed') {
+              get().showRewardToast(t(get().language, 'loginHeartClaimed'));
+            }
+          })
+          .catch((error) => console.error('[login] Failed to claim login heart:', error));
+      }
+
       if (user.banned) {
         get().showAlertDialog({
           title: t(get().language, 'adminTitle'),
@@ -1018,6 +1041,15 @@ export const useStore = create<AppState>((set, get) => ({
         termsPromptRequested: false,
       });
       await persistUserProfileRemote(user, useBootstrapPayload);
+      if (user.hearts < MAX_HEARTS) {
+        get().claimDailyHeart()
+          .then((status) => {
+            if (status === 'claimed') {
+              get().showRewardToast(t(get().language, 'loginHeartClaimed'));
+            }
+          })
+          .catch((error) => console.error('[restoreSessionFromAuth] Failed to claim login heart:', error));
+      }
       get().initLeague();
     } catch (error) {
       console.error('[restoreSessionFromAuth] Failed to restore authenticated session:', error);
@@ -1122,7 +1154,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   claimDailyHeart: async () => {
     const user = get().currentUser;
-    if (!user || user.banned) return false;
+    if (!user || user.banned) return 'already_claimed';
     try {
       const response = await claimDailyHeartRemote();
       if (response.user) {
@@ -1130,7 +1162,9 @@ export const useStore = create<AppState>((set, get) => ({
         const committed = commitUserState(get(), nextUser);
         set(committed);
       }
-      return response.status === 'claimed';
+      if (response.status === 'claimed') return 'claimed';
+      if (response.status === 'max_hearts') return 'max_hearts';
+      return 'already_claimed';
     } catch (error) {
       console.error('[claimDailyHeart] Failed to claim daily reward:', error);
       throw new Error(t(get().language, 'serverTimeError'));
@@ -1273,9 +1307,8 @@ export const useStore = create<AppState>((set, get) => ({
     const user = get().currentUser;
     if (!user?.bestTime) return;
     const currentLeague = get().league;
-    const refreshBaseline = currentLeague ? { ...currentLeague, lastRefresh: 0 } : null;
     const league = refreshLeagueIfNeeded(
-      refreshBaseline,
+      currentLeague,
       user.bestTime,
       user.id,
       user.nickname,
@@ -1460,17 +1493,19 @@ export const useStore = create<AppState>((set, get) => ({
       const grantsReward = nextStreakRaw >= videosPerHeart;
       const nextStreak = grantsReward ? 0 : nextStreakRaw;
       const grantedHearts = grantsReward ? Math.max(1, Math.floor(Number(adConfig.rewardedVideoRewardHearts ?? 1))) : 0;
+      const nextHearts = Math.min(MAX_HEARTS, user.hearts + grantedHearts);
+      const actualGrantedHearts = Math.max(0, nextHearts - user.hearts);
       const nextUser = {
         ...user,
-        hearts: Math.min(MAX_HEARTS, user.hearts + grantedHearts),
+        hearts: nextHearts,
         rewardedVideoStreak: nextStreak,
-        gameHistory: grantedHearts > 0
-          ? [...sanitizeHistory(user.gameHistory), { type: 'AD' as const, value: grantedHearts, date: new Date().toISOString() }].slice(-MAX_HISTORY_ITEMS)
+        gameHistory: actualGrantedHearts > 0
+          ? [...sanitizeHistory(user.gameHistory), { type: 'AD' as const, value: actualGrantedHearts, date: new Date().toISOString() }].slice(-MAX_HISTORY_ITEMS)
           : sanitizeHistory(user.gameHistory),
       };
       const committed = commitUserState(get(), nextUser);
       set(committed);
-      return { claimed: true, grantedHearts };
+      return { claimed: true, grantedHearts: actualGrantedHearts };
     }
 
     try {
@@ -1537,6 +1572,9 @@ export const useStore = create<AppState>((set, get) => ({
       }
 
       const rewardResult = await get().claimPendingAdReward(rewardDoc.id);
+      if (rewardResult.claimed && rewardResult.grantedHearts === 0 && (get().currentUser?.hearts ?? 0) >= MAX_HEARTS) {
+        return 'capped';
+      }
       return rewardResult.grantedHearts > 0 ? 'rewarded' : 'progressed';
     } finally {
       if (pendingRewardedVideoWaitUserId === user.id) {

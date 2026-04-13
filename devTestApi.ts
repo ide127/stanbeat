@@ -4,6 +4,7 @@ export interface TestServerUserSnapshot {
   hearts: number;
   bestTime: number | null;
   lastDailyHeart: string | null;
+  nextFreeHeartAt: string | null;
   gameHistory: HistoryEvent[];
   rewardedVideoStreak: number;
   referralRewardGranted: boolean;
@@ -15,8 +16,9 @@ export interface TestConsumeHeartForGameResponse {
 }
 
 export interface TestClaimDailyHeartResponse {
-  status: 'claimed' | 'already_claimed' | 'banned';
+  status: 'claimed' | 'already_claimed' | 'max_hearts' | 'banned';
   user?: TestServerUserSnapshot;
+  nextFreeHeartAt?: string | null;
 }
 
 export interface TestSubmitPlayResultResponse {
@@ -30,6 +32,7 @@ export interface TestClaimAdRewardResponse {
   status: 'claimed' | 'already_claimed' | 'forbidden' | 'not_found' | 'banned';
   user?: TestServerUserSnapshot;
   grantedHearts?: number;
+  rewardCapped?: boolean;
 }
 
 export interface TestRewardRecord {

@@ -21,6 +21,7 @@ export interface User {
   country: string;
   role: 'USER' | 'ADMIN';
   lastDailyHeart: string | null;
+  nextFreeHeartAt: string | null;
   agreedToTerms: boolean;
   banned: boolean;
   gameHistory: HistoryEvent[];

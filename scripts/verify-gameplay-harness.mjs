@@ -94,6 +94,7 @@ function buildInitScript() {
       hearts: 2,
       bestTime: null,
       lastDailyHeart: null,
+      nextFreeHeartAt: null,
       gameHistory: history,
       rewardedVideoStreak: 0,
       referralRewardGranted: false,
@@ -123,10 +124,15 @@ function buildInitScript() {
           };
         },
         claimDailyHeartReward: async () => {
-          if (user.lastDailyHeart === '2099-01-01') {
+          if (user.hearts >= 3) {
+            return { status: 'max_hearts', user: { ...user, gameHistory: [...history] } };
+          }
+          const nextFreeHeartAt = user.nextFreeHeartAt ? Date.parse(user.nextFreeHeartAt) : 0;
+          if (nextFreeHeartAt && Date.now() < nextFreeHeartAt) {
             return { status: 'already_claimed', user: { ...user, gameHistory: [...history] } };
           }
-          user.lastDailyHeart = '2099-01-01';
+          user.lastDailyHeart = new Date().toISOString();
+          user.nextFreeHeartAt = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
           user.hearts = Math.min(3, user.hearts + 1);
           history.push({ type: 'DAILY', value: 1, date: new Date().toISOString() });
           return { status: 'claimed', user: { ...user, gameHistory: [...history] } };
@@ -192,6 +198,7 @@ async function main() {
               country: 'KR',
               role: 'ADMIN',
               lastDailyHeart: null,
+              nextFreeHeartAt: null,
               agreedToTerms: true,
               banned: false,
               gameHistory: [],

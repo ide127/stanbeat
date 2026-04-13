@@ -217,11 +217,32 @@ function isCurrentUserLeading(league: LeagueData): boolean {
 function getBotTimeForRefresh(
   entryId: string,
   refreshBucket: number,
+  userTime: number,
   runtimeConfig: Partial<LeagueRuntimeConfig> = {},
 ): number {
   const config = resolveRuntimeConfig(runtimeConfig);
   const seed = Math.abs(hashCode(`${entryId}:${refreshBucket}`));
-  return Math.max(5000, Math.round(seededGaussian(seed, config.botTimeMean, config.botTimeStdDev)));
+  const mixedFaster = seededUnit(seed, 71) < 0.22;
+  return getCompetitiveBotTime(userTime, seed, mixedFaster ? 'ahead' : 'behind', config);
+}
+
+function getCompetitiveBotTime(
+  userTime: number,
+  seed: number,
+  side: 'ahead' | 'behind',
+  runtimeConfig: Partial<LeagueRuntimeConfig> = {},
+): number {
+  const config = resolveRuntimeConfig(runtimeConfig);
+  const unit = seededUnit(seed, side === 'ahead' ? 91 : 131);
+  if (side === 'ahead') {
+    const maxGap = Math.max(config.overtakeGapMax, Math.min(3000, Math.round(userTime * 0.24)));
+    const gap = config.overtakeGapMin + Math.round(unit * Math.max(1, maxGap - config.overtakeGapMin));
+    return Math.max(MIN_OVERTAKE_TIME_MS, userTime - gap);
+  }
+
+  const maxGap = Math.max(1500, Math.min(12000, Math.round(userTime * 0.65)));
+  const gap = config.overtakeGapMin + Math.round(unit * Math.max(1, maxGap - config.overtakeGapMin));
+  return Math.max(MIN_OVERTAKE_TIME_MS, userTime + gap);
 }
 
 function rebuildLeagueWithCurrentMembers(
@@ -240,7 +261,7 @@ function rebuildLeagueWithCurrentMembers(
     .filter((entry) => !entry.isCurrentUser)
     .map((entry) => ({
       ...entry,
-      time: refreshBucket === null ? entry.time : getBotTimeForRefresh(entry.id, refreshBucket, config),
+      time: refreshBucket === null ? entry.time : getBotTimeForRefresh(entry.id, refreshBucket, userTime, config),
       isCurrentUser: false,
       isBot: true,
     }));
@@ -304,18 +325,11 @@ export function generateLeague(
 
   for (let i = 0; i < leagueSize - 1; i++) {
     const seed = baseSeed + i * 13;
-    let rawTime = Math.round(gaussianRandom(config.botTimeMean, config.botTimeStdDev));
-    rawTime = Math.max(5000, rawTime);
+    const rawTime = getCompetitiveBotTime(userTime, seed, i < targetRank - 1 ? 'ahead' : 'behind', config);
     entries.push(createSyntheticEntry(0, rawTime, seed));
   }
 
   entries.sort((a, b) => a.time - b.time);
-
-  if (targetRank > 1 && entries[targetRank - 2]) {
-    const aheadTime = entries[targetRank - 2].time;
-    const behindTime = entries[targetRank - 1]?.time ?? aheadTime + 5000;
-    userTime = clamp(userTime, aheadTime + 1, Math.max(aheadTime + 1, behindTime - 1));
-  }
 
   if (overtakeUser) {
     let hasFasterBot = false;

@@ -3,12 +3,18 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.rewardReferral = exports.claimAdReward = exports.submitPlayResult = exports.claimDailyHeartReward = exports.consumeHeartForGame = exports.applixirCallback = void 0;
 const admin = require("firebase-admin");
 const functions = require("firebase-functions");
+const params_1 = require("firebase-functions/params");
+const https_1 = require("firebase-functions/v2/https");
+const node_crypto_1 = require("node:crypto");
 admin.initializeApp();
 const db = admin.firestore();
 const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
 const increment = admin.firestore.FieldValue.increment;
 const MAX_HEARTS = 3;
 const MAX_HISTORY_ITEMS = 100;
+const FREE_HEART_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const APPLIXIR_REWARD_FALLBACK_BUCKET_MS = 10 * 60 * 1000;
+const applixirCallbackSecret = (0, params_1.defineSecret)('APPLIXIR_CALLBACK_SECRET');
 const DEFAULT_AD_CONFIG = {
     rewardedVideoRewardHearts: 1,
     videosPerHeart: 1,
@@ -35,8 +41,20 @@ function normalizePayload(value) {
 function isFailureStatus(status) {
     return !!status && /(error|fail|declin|skip|manual|cancel|noads|blocked|timeout)/i.test(status);
 }
+function isFinalRewardStatus(status) {
+    if (!status)
+        return true;
+    return /^(complete|completed|reward|rewarded|success|adcomplete|adcompleted|adwatched)$/i.test(status.replace(/[^a-z]/gi, ''));
+}
 function isValidApplixirUserId(value) {
     return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+function secretsMatch(expected, provided) {
+    if (!provided)
+        return false;
+    const expectedBuffer = Buffer.from(expected);
+    const providedBuffer = Buffer.from(provided);
+    return expectedBuffer.length === providedBuffer.length && (0, node_crypto_1.timingSafeEqual)(expectedBuffer, providedBuffer);
 }
 function sanitizeHistory(history) {
     if (!Array.isArray(history))
@@ -60,14 +78,24 @@ function asNullableBestTime(value) {
     const parsed = asNumber(value);
     return parsed > 0 ? parsed : null;
 }
-function getUtcDay() {
-    return new Date().toISOString().slice(0, 10);
+function parseRewardTimestamp(value) {
+    if (typeof value !== 'string')
+        return null;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+function getNextFreeHeartAt(lastFreeHeart) {
+    const lastMs = parseRewardTimestamp(lastFreeHeart);
+    if (lastMs === null)
+        return null;
+    return new Date(lastMs + FREE_HEART_INTERVAL_MS).toISOString();
 }
 function buildUserSnapshot(userData) {
     return {
         hearts: clampHearts(userData.hearts),
         bestTime: asNullableBestTime(userData.bestTime),
         lastDailyHeart: typeof userData.lastDailyHeart === 'string' ? userData.lastDailyHeart : null,
+        nextFreeHeartAt: getNextFreeHeartAt(userData.lastDailyHeart),
         gameHistory: sanitizeHistory(userData.gameHistory),
         rewardedVideoStreak: Math.max(0, Math.floor(asNumber(userData.rewardedVideoStreak))),
         referralRewardGranted: Boolean(userData.referralRewardGranted),
@@ -117,14 +145,19 @@ async function resolveApplixirRewardUser(callbackUserId) {
     const userDoc = usersSnap.docs[0];
     return userDoc ? { userId: userDoc.id, applixirUserId: callbackUserId } : null;
 }
-exports.applixirCallback = functions.https.onRequest(async (req, res) => {
-    var _a, _b;
+exports.applixirCallback = (0, https_1.onRequest)({ secrets: [applixirCallbackSecret] }, async (req, res) => {
+    var _a;
     const query = normalizePayload(req.query);
     const body = normalizePayload(req.body);
     const headers = normalizePayload(req.headers);
-    const expectedSecret = (_a = process.env.APPLIXIR_CALLBACK_SECRET) === null || _a === void 0 ? void 0 : _a.trim();
-    const providedSecret = firstParam(query.secret, query.secretKey, query.token, body.secret, body.secretKey, body.token, headers['x-applixir-secret'], headers['x-callback-secret']);
-    if (expectedSecret && providedSecret !== expectedSecret) {
+    const expectedSecret = applixirCallbackSecret.value().trim();
+    const providedSecret = firstParam(query.secret, query.secretkey, query.secretKey, query.token, query.callbackSecret, query.callback_secret, body.secret, body.secretkey, body.secretKey, body.token, body.callbackSecret, body.callback_secret, headers['x-applixir-secret'], headers['x-callback-secret']);
+    if (!expectedSecret) {
+        console.error('[AppLixir Callback] Secret is not configured');
+        res.status(500).send('Callback secret not configured');
+        return;
+    }
+    if (!secretsMatch(expectedSecret, providedSecret)) {
         console.error('[AppLixir Callback] Secret mismatch');
         res.status(403).send('Forbidden');
         return;
@@ -148,8 +181,14 @@ exports.applixirCallback = functions.https.onRequest(async (req, res) => {
         res.status(200).send('IGNORED');
         return;
     }
+    if (!isFinalRewardStatus(status)) {
+        console.warn(`[AppLixir Callback] Ignoring non-final status "${status}" for user ${userId}`);
+        res.status(200).send('IGNORED');
+        return;
+    }
     const payout = asNumber(firstParam(query.payout, query.amount, body.payout, body.amount));
-    const externalId = (_b = firstParam(query.transactionId, query.transaction_id, query.callbackId, query.eventId, query.rewardId, body.transactionId, body.transaction_id, body.callbackId, body.eventId, body.rewardId)) !== null && _b !== void 0 ? _b : `${userId}-${Date.now()}`;
+    const gameId = firstParam(query.gameId, query.game_id, query.game, body.gameId, body.game_id, body.game);
+    const externalId = (_a = firstParam(query.transactionId, query.transaction_id, query.callbackId, query.eventId, query.rewardId, query.id, query.requestId, query.request_id, query.impressionId, query.impression_id, body.transactionId, body.transaction_id, body.callbackId, body.eventId, body.rewardId, body.id, body.requestId, body.request_id, body.impressionId, body.impression_id)) !== null && _a !== void 0 ? _a : `${callbackUserId}-${gameId !== null && gameId !== void 0 ? gameId : 'game'}-${Math.floor(Date.now() / APPLIXIR_REWARD_FALLBACK_BUCKET_MS)}`;
     const rewardDocId = `applixir_${externalId}`;
     try {
         const rewardRef = db.collection('adRewards').doc(rewardDocId);
@@ -159,6 +198,7 @@ exports.applixirCallback = functions.https.onRequest(async (req, res) => {
             provider: 'applixir',
             applixirUserId,
             callbackUserId,
+            gameId: gameId !== null && gameId !== void 0 ? gameId : null,
             providerEvent: status !== null && status !== void 0 ? status : 'completed',
             type: 'rewarded_video_applixir',
             createdAt: serverTimestamp(),
@@ -229,7 +269,8 @@ exports.claimDailyHeartReward = functions.https.onCall(async (request) => {
     }
     const userRef = db.collection('users').doc(userId);
     const leaderboardRef = db.collection('leaderboard').doc(userId);
-    const todayUtc = getUtcDay();
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.parse(nowIso);
     let response = { status: 'banned' };
     await db.runTransaction(async (transaction) => {
         const userSnap = await transaction.get(userRef);
@@ -241,20 +282,27 @@ exports.claimDailyHeartReward = functions.https.onCall(async (request) => {
             response = { status: 'banned', user: buildUserSnapshot(userData) };
             return;
         }
-        if (userData.lastDailyHeart === todayUtc) {
-            response = { status: 'already_claimed', user: buildUserSnapshot(userData) };
+        const lastFreeHeartMs = parseRewardTimestamp(userData.lastDailyHeart);
+        const nextFreeHeartMs = lastFreeHeartMs === null ? 0 : lastFreeHeartMs + FREE_HEART_INTERVAL_MS;
+        if (lastFreeHeartMs !== null && nowMs < nextFreeHeartMs) {
+            response = { status: 'already_claimed', user: buildUserSnapshot(userData), nextFreeHeartAt: new Date(nextFreeHeartMs).toISOString() };
             return;
         }
-        const nextHearts = Math.min(MAX_HEARTS, clampHearts(userData.hearts) + 1);
+        const currentHearts = clampHearts(userData.hearts);
+        if (currentHearts >= MAX_HEARTS) {
+            response = { status: 'max_hearts', user: buildUserSnapshot(userData), nextFreeHeartAt: null };
+            return;
+        }
+        const nextHearts = Math.min(MAX_HEARTS, currentHearts + 1);
         const nextHistory = appendHistory(userData.gameHistory, {
             type: 'DAILY',
             value: 1,
-            date: new Date().toISOString(),
+            date: nowIso,
         });
-        const nextUser = Object.assign(Object.assign({}, userData), { hearts: nextHearts, lastDailyHeart: todayUtc, gameHistory: nextHistory });
+        const nextUser = Object.assign(Object.assign({}, userData), { hearts: nextHearts, lastDailyHeart: nowIso, gameHistory: nextHistory });
         transaction.set(userRef, {
             hearts: nextHearts,
-            lastDailyHeart: todayUtc,
+            lastDailyHeart: nowIso,
             gameHistory: nextHistory,
             updatedAt: serverTimestamp(),
         }, { merge: true });
@@ -262,7 +310,7 @@ exports.claimDailyHeartReward = functions.https.onCall(async (request) => {
             hearts: nextHearts,
             updatedAt: serverTimestamp(),
         }, { merge: true });
-        response = { status: 'claimed', user: buildUserSnapshot(nextUser) };
+        response = { status: 'claimed', user: buildUserSnapshot(nextUser), nextFreeHeartAt: getNextFreeHeartAt(nowIso) };
     });
     return response;
 });
@@ -380,29 +428,33 @@ exports.claimAdReward = functions.https.onCall(async (request) => {
                 grantedHearts = adConfig.rewardedVideoRewardHearts;
             }
         }
-        const nextHearts = Math.min(MAX_HEARTS, clampHearts(userData.hearts) + grantedHearts);
-        if (grantedHearts > 0) {
+        const currentHearts = clampHearts(userData.hearts);
+        const nextHearts = Math.min(MAX_HEARTS, currentHearts + grantedHearts);
+        const actualGrantedHearts = Math.max(0, nextHearts - currentHearts);
+        if (actualGrantedHearts > 0) {
             nextHistory = appendHistory(nextHistory, {
                 type: 'AD',
-                value: grantedHearts,
+                value: actualGrantedHearts,
                 date: new Date().toISOString(),
             });
         }
         const nextUser = Object.assign(Object.assign({}, userData), { hearts: nextHearts, rewardedVideoStreak: nextStreak, gameHistory: nextHistory });
         transaction.update(rewardRef, {
             claimedAt: serverTimestamp(),
-            grantedHearts,
+            grantedHearts: actualGrantedHearts,
+            attemptedGrantedHearts: grantedHearts,
             resolvedVideoStreak: nextStreak,
             resolvedAt: serverTimestamp(),
         });
-        transaction.set(userRef, Object.assign(Object.assign({ hearts: nextHearts, rewardedVideoStreak: nextStreak }, (grantedHearts > 0 ? { gameHistory: nextHistory } : {})), { updatedAt: serverTimestamp() }), { merge: true });
+        transaction.set(userRef, Object.assign(Object.assign({ hearts: nextHearts, rewardedVideoStreak: nextStreak }, (actualGrantedHearts > 0 ? { gameHistory: nextHistory } : {})), { updatedAt: serverTimestamp() }), { merge: true });
         transaction.set(leaderboardRef, {
             hearts: nextHearts,
             updatedAt: serverTimestamp(),
         }, { merge: true });
         response = {
             status: 'claimed',
-            grantedHearts,
+            grantedHearts: actualGrantedHearts,
+            rewardCapped: grantedHearts > 0 && actualGrantedHearts === 0,
             user: buildUserSnapshot(nextUser),
         };
     });
