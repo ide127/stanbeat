@@ -19,7 +19,7 @@ const DEFAULT_RUNTIME_CONFIG = {
 
 const MIN_USER_RANK = 2;
 const MAX_USER_RANK = 30;
-const MIN_OVERTAKE_TIME_MS = 1000;
+const MIN_OVERTAKE_TIME_MS = 1;
 const adjectives = ['Lovely', 'Shiny', 'Happy', 'Bright', 'Neon', 'Cute', 'Royal', 'Lucky', 'Star', 'Dream', 'Sparkle', 'Moon', 'Sweet', 'Mystic', 'Crystal'];
 const members = ['Jimin', 'V', 'JK', 'Hobi', 'SUGA', 'RM', 'Jin', 'ARMY', 'Kookie', 'TaeTae', 'Mochi', 'Tiger', 'Yoongi', 'Namjoon'];
 const countries = ['KR', 'US', 'JP', 'BR', 'TH', 'ID', 'PH', 'FR', 'DE', 'VN', 'MX', 'AR', 'TR', 'IN', 'GB', 'ES', 'IT', 'PL', 'RU', 'MY'];
@@ -401,8 +401,7 @@ export function generateViewOnlyLeague(
 
   for (let i = 0; i < leagueSize; i++) {
     const seed = baseSeed + i * 13;
-    let rawTime = Math.round(gaussianRandom(config.botTimeMean, config.botTimeStdDev));
-    rawTime = Math.max(5000, rawTime);
+    const rawTime = getCompetitiveBotTime(24000, seed, i < Math.min(12, leagueSize - 1) ? 'ahead' : 'behind', config);
     entries.push(createSyntheticEntry(0, rawTime, seed));
   }
 

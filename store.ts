@@ -124,6 +124,8 @@ interface AppState {
   currentView: ViewState;
   activeFandomId: FandomId;
   isGameFinished: boolean;
+  gameSessionActive: boolean;
+  gameRunStartedAt: number | null;
   gameExitRequested: boolean;
   isMenuOpen: boolean;
   loginPromptRequested: boolean;
@@ -157,6 +159,7 @@ interface AppState {
   setView: (view: ViewState) => void;
   setActiveFandom: (id: string) => void;
   setGameFinished: (value: boolean) => void;
+  markGameSessionCancelled: (elapsedMs?: number) => void;
   requestGameExit: () => void;
   clearGameExitRequest: () => void;
   toggleMenu: () => void;
@@ -188,7 +191,7 @@ interface AppState {
   refreshLeague: () => void;
   getLeagueGap: () => number;
   getLeagueCountdown: () => string;
-  resetSeason: () => void;
+  resetSeason: () => Promise<void>;
   banUser: (id: string) => void;
   unbanUser: (id: string) => void;
   editUserHeart: (id: string, hearts: number, mode?: 'SET' | 'DELTA') => void;
@@ -681,6 +684,8 @@ export const useStore = create<AppState>((set, get) => ({
   currentView: 'HOME',
   activeFandomId: readStoredFandomId(),
   isGameFinished: false,
+  gameSessionActive: false,
+  gameRunStartedAt: null,
   gameExitRequested: false,
   isMenuOpen: false,
   loginPromptRequested: false,
@@ -714,7 +719,10 @@ export const useStore = create<AppState>((set, get) => ({
   setView: (view) => {
     if (view !== get().currentView) {
       window.history.pushState({ view }, '', `${window.location.pathname}${window.location.search}${window.location.hash}`);
-      set({ currentView: view });
+      set({
+        currentView: view,
+        ...(view !== 'GAME' ? { gameSessionActive: false, gameRunStartedAt: null } : {}),
+      });
     }
   },
   setActiveFandom: (id) => {
@@ -722,7 +730,16 @@ export const useStore = create<AppState>((set, get) => ({
     persistFandomId(activeFandomId);
     set({ activeFandomId });
   },
-  setGameFinished: (value) => set({ isGameFinished: value }),
+  setGameFinished: (value) => set({
+    isGameFinished: value,
+    ...(value ? { gameSessionActive: false, gameRunStartedAt: null } : {}),
+  }),
+  markGameSessionCancelled: (elapsedMs) => {
+    const state = get();
+    if (!state.gameSessionActive || state.isGameFinished) return;
+    state.addHistoryEvent('CANCELLED', Math.max(0, Math.round(elapsedMs ?? (Date.now() - (state.gameRunStartedAt ?? Date.now())))));
+    set({ gameSessionActive: false, gameRunStartedAt: null, isGameFinished: false });
+  },
   requestGameExit: () => set({ gameExitRequested: true }),
   clearGameExitRequest: () => set({ gameExitRequested: false }),
   toggleMenu: () => set((state) => ({ isMenuOpen: !state.isMenuOpen })),
@@ -1073,6 +1090,9 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       currentUser: null,
       currentView: 'HOME',
+      gameSessionActive: false,
+      gameRunStartedAt: null,
+      isGameFinished: false,
       termsAccepted: false,
       videoWatchCount: 0,
       adminStatsUnsubscribe: null,
@@ -1132,7 +1152,10 @@ export const useStore = create<AppState>((set, get) => ({
         });
       }
 
-      if (response.status === 'consumed') return 'started';
+      if (response.status === 'consumed') {
+        set({ gameSessionActive: true, gameRunStartedAt: Date.now(), isGameFinished: false });
+        return 'started';
+      }
       if (response.status === 'no_hearts') return 'needs_hearts';
 
       get().showAlertDialog({
@@ -1333,7 +1356,7 @@ export const useStore = create<AppState>((set, get) => ({
     return getRefreshCountdown(league);
   },
 
-  resetSeason: () => {
+  resetSeason: async () => {
     // Season reset: wipe all scores. Leaderboard starts empty and is filled
     // dynamically by the League system (60-99 synthetic bots per league).
     const newEndTime = Date.now() + getMsUntilNextUtcMidnight();
@@ -1341,7 +1364,7 @@ export const useStore = create<AppState>((set, get) => ({
     safeStorage.set('stanbeat_league', null);
 
     if (isFirebaseEnabled) {
-      deleteAllScores();
+      await deleteAllScores();
     }
     safeStorage.set(UTC_DAY_STORAGE_KEY, todayUtc());
     safeStorage.set('stanbeat_season_ends', newEndTime);
@@ -1353,7 +1376,7 @@ export const useStore = create<AppState>((set, get) => ({
       heartsUsedToday: 0,
     });
     // After reset, trigger a fresh league generation if user has a best time
-    get().fetchLeaderboard();
+    await get().fetchLeaderboard();
   },
 
   banUser: (id) => {
@@ -1536,6 +1559,10 @@ export const useStore = create<AppState>((set, get) => ({
 
     const user = get().currentUser;
     if (!user || user.banned) return 'failed';
+    if (user.hearts >= MAX_HEARTS) {
+      get().showRewardToast(t(get().language, 'maxHeartsReached'));
+      return 'capped';
+    }
     const userId = user.id;
     const rewardWindowStartedAt = Date.now();
     callbacks.onPhase?.('loading');

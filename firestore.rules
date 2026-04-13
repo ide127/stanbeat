@@ -113,10 +113,13 @@ service cloud.firestore {
         && data.subject is string
         && data.subject.size() > 0
         && data.subject.size() <= 120
+        && data.subject.matches('.*\\S.*')
         && data.message is string
         && data.message.size() > 0
         && data.message.size() <= 5000
-        && data.status == 'open';
+        && data.message.matches('.*\\S.*')
+        && data.status == 'open'
+        && data.createdAt == request.time;
     }
 
     match /users/{userId} {

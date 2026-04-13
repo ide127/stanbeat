@@ -104,6 +104,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     clearActionPrompts,
     activeFandomId,
     setActiveFandom,
+    deferredPrompt,
   } = useStore();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
@@ -114,6 +115,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [remainingParts, setRemainingParts] = useState({ h: 0, m: 0, s: 0, ms: 0 });
   const [leagueCountdown, setLeagueCountdown] = useState('10:00');
+  const playRequestPendingRef = useRef(false);
 
   // Show notice popup on mount if enabled
   useEffect(() => {
@@ -208,14 +210,22 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   })();
 
   const handlePlay = async () => {
-    if (transitioning) return;
+    if (transitioning || playRequestPendingRef.current) return;
+    playRequestPendingRef.current = true;
     vibrate();
     const result = await requestGameStart(onShowHearts);
-    if (result !== 'started') return;
+    if (result !== 'started') {
+      playRequestPendingRef.current = false;
+      return;
+    }
     // Heart break + zoom transition
     setTransitioning(true);
     trackEvent('game_start', { user_id: currentUser?.id || 'guest' });
-    timerRef.current = setTimeout(() => { setView('GAME'); setTransitioning(false); }, 900);
+    timerRef.current = setTimeout(() => {
+      setView('GAME');
+      setTransitioning(false);
+      playRequestPendingRef.current = false;
+    }, 900);
   };
 
   const rewardImages = [
@@ -500,10 +510,11 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         </h2>
       </div>
 
-      {useStore.getState().deferredPrompt && (
+      {deferredPrompt && (
         <button onClick={() => {
           vibrate();
           const promptEvent = useStore.getState().deferredPrompt;
+          if (!promptEvent) return;
           promptEvent.prompt();
           promptEvent.userChoice.then(() => useStore.setState({ deferredPrompt: null }));
         }} className="w-full mt-3 bg-[#00FFFF]/20 border border-[#00FFFF]/50 text-[#00FFFF] font-bold py-3 rounded-xl btn-squishy flex items-center justify-center gap-2">
@@ -1607,10 +1618,11 @@ const AdminScreen = () => {
   } = useStore();
 
   useEffect(() => {
+    if (currentUser?.role !== 'ADMIN') return undefined;
     fetchAdminData();
     startAdminLiveStats();
     return () => stopAdminLiveStats();
-  }, []);
+  }, [currentUser?.role, fetchAdminData, startAdminLiveStats, stopAdminLiveStats]);
 
   const [noticeDraft, setNoticeDraft] = useState(notice);
   const [heartDraft, setHeartDraft] = useState(3);
@@ -1622,10 +1634,6 @@ const AdminScreen = () => {
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
   const [supportTicketsLoading, setSupportTicketsLoading] = useState(false);
 
-  if (currentUser?.role !== 'ADMIN') {
-    return <div className="flex-1 p-4 flex items-center justify-center text-white/50">{t(language, 'unauthorizedAccess')}</div>;
-  }
-
   const [botMean, setBotMean] = useState(botConfig.mean / 1000);
   const [botStd, setBotStd] = useState(botConfig.stdDev / 1000);
 
@@ -1635,12 +1643,17 @@ const AdminScreen = () => {
   }, [botConfig.mean, botConfig.stdDev]);
 
   useEffect(() => {
+    if (currentUser?.role !== 'ADMIN') return;
     setSupportTicketsLoading(true);
     getSupportTickets()
       .then(setSupportTickets)
       .catch((error) => console.error('[AdminScreen] Failed to fetch support tickets:', error))
       .finally(() => setSupportTicketsLoading(false));
-  }, []);
+  }, [currentUser?.role]);
+
+  if (currentUser?.role !== 'ADMIN') {
+    return <div className="flex-1 p-4 flex items-center justify-center text-white/50">{t(language, 'unauthorizedAccess')}</div>;
+  }
 
   const riskWarning = adminUsers.some((entry) => typeof entry.time === 'number' && entry.time <= 1000);
 
@@ -3068,10 +3081,25 @@ export default function App() {
     type BrowserHistoryState = { view?: 'HOME' | 'GAME' | 'LEADERBOARD' | 'ADMIN' | 'HISTORY' | 'SUPPORT' };
     const handlePopState = (e: PopStateEvent) => {
       const state = e.state as BrowserHistoryState | null;
+      const store = useStore.getState();
       if (state && state.view) {
-        useStore.setState({ currentView: state.view });
+        if (state.view === 'GAME' && !store.gameSessionActive) {
+          window.history.replaceState({ view: 'HOME' }, '', `${window.location.pathname}${window.location.search}${window.location.hash}`);
+          useStore.setState({ currentView: 'HOME', gameSessionActive: false, gameRunStartedAt: null, isGameFinished: false });
+          return;
+        }
+        if (store.currentView === 'GAME' && state.view !== 'GAME' && store.gameSessionActive && !store.isGameFinished) {
+          store.markGameSessionCancelled();
+        }
+        useStore.setState({
+          currentView: state.view,
+          ...(state.view !== 'GAME' ? { gameSessionActive: false, gameRunStartedAt: null } : {}),
+        });
       } else {
-        useStore.setState({ currentView: 'HOME' });
+        if (store.currentView === 'GAME' && store.gameSessionActive && !store.isGameFinished) {
+          store.markGameSessionCancelled();
+        }
+        useStore.setState({ currentView: 'HOME', gameSessionActive: false, gameRunStartedAt: null });
       }
     };
     window.addEventListener('popstate', handlePopState);

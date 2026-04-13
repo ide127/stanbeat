@@ -66,7 +66,7 @@ function isFailureStatus(status: string | undefined): boolean {
 }
 
 function isFinalRewardStatus(status: string | undefined): boolean {
-  if (!status) return true;
+  if (!status) return false;
   return /^(complete|completed|reward|rewarded|success|adcomplete|adcompleted|adwatched)$/i.test(status.replace(/[^a-z]/gi, ''));
 }
 
@@ -115,6 +115,15 @@ function getNextFreeHeartAt(lastFreeHeart: unknown): string | null {
   const lastMs = parseRewardTimestamp(lastFreeHeart);
   if (lastMs === null) return null;
   return new Date(lastMs + FREE_HEART_INTERVAL_MS).toISOString();
+}
+
+function sanitizeCallbackPayload(payload: LooseRecord): LooseRecord {
+  const redactedKeys = new Set(['secret', 'secretkey', 'secretKey', 'token', 'callbackSecret', 'callback_secret']);
+  const sanitized: LooseRecord = {};
+  for (const [key, value] of Object.entries(payload)) {
+    sanitized[key] = redactedKeys.has(key) ? '[redacted]' : value;
+  }
+  return sanitized;
 }
 
 function buildUserSnapshot(userData: UserDoc): LooseRecord {
@@ -260,6 +269,11 @@ export const applixirCallback = onRequest({ secrets: [applixirCallbackSecret] },
   const { userId, applixirUserId } = resolvedUser;
 
   const status = firstParam(query.status, query.event, query.type, body.status, body.event, body.type);
+  if (!status) {
+    console.warn(`[AppLixir Callback] Missing callback status for user ${userId}`);
+    res.status(400).send('Missing callback status');
+    return;
+  }
   if (isFailureStatus(status)) {
     console.warn(`[AppLixir Callback] Ignoring failure status "${status}" for user ${userId}`);
     res.status(200).send('IGNORED');
@@ -299,25 +313,46 @@ export const applixirCallback = onRequest({ secrets: [applixirCallbackSecret] },
 
   try {
     const rewardRef = db.collection('adRewards').doc(rewardDocId);
-    await rewardRef.set({
-      userId,
-      payout,
-      provider: 'applixir',
-      applixirUserId,
-      callbackUserId,
-      gameId: gameId ?? null,
-      providerEvent: status ?? 'completed',
-      type: 'rewarded_video_applixir',
-      createdAt: serverTimestamp(),
-      claimedAt: null,
-      rawPayload: {
-        method: req.method,
-        query,
-        body,
-      },
-    }, { merge: true });
+    let createdReward = false;
+    await db.runTransaction(async (transaction) => {
+      const existingReward = await transaction.get(rewardRef);
+      if (existingReward.exists) {
+        transaction.set(rewardRef, {
+          callbackSeenAt: serverTimestamp(),
+          callbackReplayCount: increment(1),
+          lastProviderEvent: status,
+          lastRawPayload: {
+            method: req.method,
+            query: sanitizeCallbackPayload(query),
+            body: sanitizeCallbackPayload(body),
+          },
+        }, { merge: true });
+        return;
+      }
 
-    await bumpGlobalRevenue(payout);
+      transaction.set(rewardRef, {
+        userId,
+        payout,
+        provider: 'applixir',
+        applixirUserId,
+        callbackUserId,
+        gameId: gameId ?? null,
+        providerEvent: status,
+        type: 'rewarded_video_applixir',
+        createdAt: serverTimestamp(),
+        claimedAt: null,
+        rawPayload: {
+          method: req.method,
+          query: sanitizeCallbackPayload(query),
+          body: sanitizeCallbackPayload(body),
+        },
+      });
+      createdReward = true;
+    });
+
+    if (createdReward) {
+      await bumpGlobalRevenue(payout);
+    }
 
     console.log(`[AppLixir Callback] Reward recorded for user ${userId}`);
     res.status(200).send('OK');

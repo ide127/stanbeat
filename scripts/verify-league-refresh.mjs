@@ -87,6 +87,21 @@ assert.deepEqual(
   'refresh should keep the same league members',
 );
 
+const edgeFastCurrent = {
+  ...current,
+  lastRefresh: now - LEAGUE_REFRESH_INTERVAL_MS - 1000,
+  userBestAtGeneration: 1000,
+  entries: current.entries.map((entry, index) => ({
+    ...entry,
+    time: index === 0 ? 1000 : 3000 + index * 1000,
+    rank: index + 1,
+  })),
+};
+const edgeFastRefreshed = refreshLeagueIfNeeded(edgeFastCurrent, 1000, 'real-user', 'RealUser', 'KR', '', runtimeConfig);
+const edgeFastUser = edgeFastRefreshed?.entries.find((entry) => entry.isCurrentUser);
+assert.ok(edgeFastUser, 'edge fast refresh should keep current user');
+assert.ok(edgeFastUser.rank > 1, 'even a 1000ms user record should be overtaken after the 10-minute refresh');
+
 const recentNewBest = refreshLeagueIfNeeded(
   { ...current, lastRefresh: now, userBestAtGeneration: 2000 },
   1700,

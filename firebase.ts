@@ -214,8 +214,8 @@ export async function getAdminGlobalUsers(): Promise<Array<Record<string, unknow
   if (!db) return [];
 
   const [userSnap, leaderboardSnap] = await Promise.all([
-    getDocs(collection(db, 'users')),
-    getDocs(collection(db, 'leaderboard')),
+    getDocs(query(collection(db, 'users'), orderBy('updatedAt', 'desc'), limit(500))),
+    getDocs(query(collection(db, 'leaderboard'), orderBy('updatedAt', 'desc'), limit(500))),
   ]);
 
   const merged = new Map<string, Record<string, unknown>>();

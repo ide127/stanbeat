@@ -97,10 +97,18 @@ export const Header = ({ onOpenLanguage }: { onOpenLanguage: () => void }) => {
 
 // ─── 사이드 메뉴 컴포넌트 (로그인/로그아웃, 홈, 리더보드, 히스토리 등) ───
 export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () => void; onOpenHearts: () => void }) => {
-  const { isMenuOpen, toggleMenu, currentUser, logout, login, setView, language, startGame } = useStore();
+  const { isMenuOpen, toggleMenu, currentUser, logout, login, setView, currentView, isGameFinished, requestGameExit, language, startGame } = useStore();
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   if (!isMenuOpen) return null;
+  const navigate = (view: Parameters<typeof setView>[0]) => {
+    toggleMenu();
+    if (currentView === 'GAME' && !isGameFinished && view !== 'GAME') {
+      requestGameExit();
+      return;
+    }
+    setView(view);
+  };
 
   return (
     <div className="fixed inset-0 z-[60] flex">
@@ -157,12 +165,12 @@ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () 
             }} />
           )}
           <MenuItem icon={<HeartHandshake size={20} />} label={t(language, 'chargeHearts')} color="text-[#FF0080]" onClick={() => { toggleMenu(); onOpenHearts(); }} />
-          <MenuItem icon={<Trophy size={20} />} label={t(language, 'rankingBoardTitle')} onClick={() => { toggleMenu(); setView('LEADERBOARD'); }} />
-          <MenuItem icon={<History size={20} />} label={t(language, 'history')} onClick={() => { toggleMenu(); setView('HISTORY'); }} />
-          <MenuItem icon={<MessageSquare size={20} />} label={t(language, 'supportInquiryTitle')} color="text-[#00FFFF]" onClick={() => { toggleMenu(); setView('SUPPORT'); }} />
+          <MenuItem icon={<Trophy size={20} />} label={t(language, 'rankingBoardTitle')} onClick={() => navigate('LEADERBOARD')} />
+          <MenuItem icon={<History size={20} />} label={t(language, 'history')} onClick={() => navigate('HISTORY')} />
+          <MenuItem icon={<MessageSquare size={20} />} label={t(language, 'supportInquiryTitle')} color="text-[#00FFFF]" onClick={() => navigate('SUPPORT')} />
           <MenuItem icon={<Globe size={20} />} label={t(language, 'languageTitle')} onClick={() => { toggleMenu(); onOpenLanguage(); }} />
           {currentUser?.role === 'ADMIN' && (
-            <MenuItem icon={<ShieldAlert size={20} />} label={t(language, 'adminTitle')} color="text-red-400" onClick={() => { toggleMenu(); setView('ADMIN'); }} />
+            <MenuItem icon={<ShieldAlert size={20} />} label={t(language, 'adminTitle')} color="text-red-400" onClick={() => navigate('ADMIN')} />
           )}
         </div>
         {currentUser && (
