@@ -1,18 +1,27 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, DollarSign, Play, RefreshCw, Settings, Share2, ShieldAlert, Trash2, ToggleLeft, ToggleRight, Users, Video } from 'lucide-react';
+import { ArrowLeft, DollarSign, Mail, MessageSquare, Play, RefreshCw, Settings, Share2, ShieldAlert, Trash2, ToggleLeft, ToggleRight, Trophy, Users, Video } from 'lucide-react';
 import { Layout, Modal } from './components/Layout';
 import { languageOptions, t } from './i18n';
 import { useStore, detectLanguageFromIP, isRewardedVideoWaitActive, type AdConfig } from './store';
-import { AdminUserRow, DeferredInstallPrompt, GridCell, WordConfig, HistoryEvent } from './types';
+import { AdminUserRow, DeferredInstallPrompt, GridCell, WordConfig, HistoryEvent, SupportTicket } from './types';
 import { formatTime, generateAvatarUrl, generateGrid, getCountryFlag, getSolutionCells, playSfx } from './utils';
 import { getCurrentSeasonNumber, generateGuestShowcase, getLeagueFocus, getMsUntilNextUtcMidnight, getProjectedRankForTime } from './league';
 import { listenForApplixirRewards } from './services/rewards/applixirRewards';
-import { onAuthStateChanged } from './firebase';
+import { getSupportTickets, onAuthStateChanged, submitSupportTicket } from './firebase';
 import { runtimeConfig } from './runtimeConfig';
 import { trackEvent } from './services/analytics';
 import { fandomPacks, getFandomPack } from './features/fandom';
 
 const vibrate = () => { navigator.vibrate?.(15); playSfx('tap'); };
+
+const stableUnit = (value: string): number => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(index);
+    hash |= 0;
+  }
+  return (Math.abs(hash) % 10000) / 10000;
+};
 
 const copyTextToClipboard = async (text: string): Promise<boolean> => {
   try {
@@ -268,7 +277,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     if (reduceMotion) return;
 
     const positions = [0, 0];
-    const baseSpeeds = [38, 34];
+    const baseSpeeds = [45.6, 40.8];
     let lastFrame = performance.now();
     let frameId = 0;
 
@@ -327,7 +336,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-[shimmer_2s_linear_infinite]" />
         <div className="relative flex items-center justify-center gap-3">
           <Play fill="white" />
-          <span>{t(language, 'playNow')}</span>
+          <span>{t(language, 'playNowFandom', { fandom: activeFandom.displayName })}</span>
         </div>
       </button>
 
@@ -369,7 +378,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
                     tabIndex={isClone ? -1 : 0}
                     aria-pressed={!isClone ? isSelected : undefined}
                     onClick={() => { vibrate(); setActiveFandom(pack.id); }}
-                    className={`min-w-[132px] rounded-full px-3 py-2 text-left btn-squishy transition-all ${isSelected ? 'text-black' : 'text-white hover:bg-white/10'}`}
+                    className={`min-w-[150px] rounded-full px-4 py-2.5 text-left btn-squishy transition-all ${isSelected ? 'text-black' : 'text-white hover:bg-white/10'}`}
                     style={{
                       background: isSelected
                         ? `linear-gradient(135deg, ${pack.accent}, #ffffff)`
@@ -379,11 +388,11 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
                         : `inset 0 0 0 1px ${pack.accent}70`,
                     }}
                   >
-                    <span className="flex items-center justify-between gap-2 text-xs font-black">
+                    <span className="flex items-center justify-between gap-2 text-sm font-black">
                       <span>{pack.displayName}</span>
                       {isSelected && <span aria-hidden="true">✓</span>}
                     </span>
-                    <span className={`block text-[10px] ${isSelected ? 'text-black/65' : 'text-white/75'}`}>{pack.fandomName}</span>
+                    <span className={`block text-[11px] ${isSelected ? 'text-black/65' : 'text-white/75'}`}>{pack.fandomName}</span>
                   </button>
                   );
                 })}
@@ -396,69 +405,25 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         <p className="mt-2 text-[10px] leading-relaxed text-white/60">{t(language, 'fandomDisclaimer')}</p>
       </section>
 
-      {/* Prize urgency banner */}
-      <section className="mt-4 rounded-xl border border-[#FFD700]/40 bg-gradient-to-r from-[#FFD700]/10 via-[#FF6B00]/10 to-[#FF0080]/10 p-3 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-[shimmer_3s_linear_infinite]" />
-        <h2 className="text-[#FFE082] font-black text-base tracking-wide">{t(language, 'prizeOverallBanner')}</h2>
-        <p className="text-white/90 text-sm mt-0.5">{t(language, 'prizeLeagueBanner')}</p>
-      </section>
-
-      <div className="mt-3">
-        <p className="text-white/60 text-xs uppercase tracking-widest">{t(language, 'seasonLabel', { seasonNum: String(seasonNum) })}</p>
-        <h2 className="flex items-end justify-center gap-1 mt-1">
-          {remainingParts.h > 0 && <><span className="text-red-400 text-3xl font-black font-mono">{remainingParts.h}</span><span className="text-white/50 text-lg mb-1">{t(language, 'hoursUnit')}</span></>}
-          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.m).padStart(2, '0')}</span><span className="text-white/50 text-lg mb-1">{t(language, 'minutesUnit')}</span>
-          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.s).padStart(2, '0')}</span>
-          <span className="text-red-400 text-xl font-black font-mono">.{String(remainingParts.ms).padStart(2, '0')}</span>
-          <span className="text-white/50 text-lg mb-1">{t(language, 'secondsUnit')}</span>
-        </h2>
-      </div>
-
-      {currentUser && league && (
-        <div className="mt-4 rounded-xl border border-[#00FFFF]/20 bg-gradient-to-br from-[#00FFFF]/10 via-[#1A0B2E] to-[#FF0080]/10 p-4 text-left">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[#00FFFF] text-[11px] font-black tracking-[0.2em]">{t(language, 'homeLeagueTitle')}</p>
-            <p className="text-white/45 text-[10px]">{t(language, 'nextSync', { time: leagueCountdown })}</p>
+      <section className="mt-4 rounded-2xl border border-[#FFD700]/70 bg-[radial-gradient(circle_at_top_left,rgba(255,215,0,0.28),transparent_38%),linear-gradient(135deg,rgba(255,0,128,0.26),rgba(0,255,255,0.12)_45%,rgba(255,107,0,0.25))] p-4 relative overflow-hidden text-left shadow-[0_0_30px_rgba(255,215,0,0.18)]">
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-[shimmer_3s_linear_infinite]" />
+        <p className="relative text-[#FFE082] text-[11px] font-black tracking-[0.24em]">{t(language, 'rewardText')}</p>
+        <div className="relative grid grid-cols-2 gap-3 mt-3">
+          <div className="rounded-xl bg-black/45 border border-[#FFD700]/50 p-3">
+            <div className="text-2xl mb-1">✈️</div>
+            <p className="text-white text-xs font-bold">{t(language, 'overallPrize')}</p>
+            <p className="text-[#FFE082] text-lg font-black mt-1">Korea trip</p>
           </div>
-          <p className="text-white text-lg font-black mt-2">{league.displayName}</p>
-          <p className="text-white/55 text-[11px] mt-1">
-            {t(language, 'homeLeagueMeta', { players: String(league.leagueSize), totalLeagues: String(league.totalLeagues) })}
-          </p>
-          <div className="mt-3 rounded-lg bg-black/25 border border-white/10 p-3 space-y-2">
-            <p className="text-white text-sm font-semibold">
-              {leagueEntry
-                ? t(language, 'homeLeagueStanding', { rank: String(leagueEntry.rank), time: formatTime(currentUser.bestTime ?? leagueEntry.time) })
-                : t(language, 'homeLeaguePreview', { league: league.displayName })}
-            </p>
-            {leagueFocusText && (
-              <p className="text-[#00FFFF] text-xs font-semibold">{leagueFocusText}</p>
-            )}
-            {!leagueEntry && (
-              <p className="text-white/50 text-[11px]">{t(language, 'noRecordYet')}</p>
-            )}
+          <div className="rounded-xl bg-black/45 border border-[#00FFFF]/40 p-3">
+            <div className="text-2xl mb-1">🎁</div>
+            <p className="text-white text-xs font-bold">{t(language, 'leaguePrize')}</p>
+            <p className="text-[#00FFFF] text-lg font-black mt-1">K-culture box</p>
           </div>
         </div>
-      )}
+      </section>
 
-      <p className="text-white/80 text-sm mt-3">
-        {t(language, 'description')}
-        <span className="text-xs text-white/65 align-top ml-1">{t(language, 'termsApply')}</span>
-      </p>
-
-      {useStore.getState().deferredPrompt && (
-        <button onClick={() => {
-          vibrate();
-          const promptEvent = useStore.getState().deferredPrompt;
-          promptEvent.prompt();
-          promptEvent.userChoice.then(() => useStore.setState({ deferredPrompt: null }));
-        }} className="w-full mt-3 bg-[#00FFFF]/20 border border-[#00FFFF]/50 text-[#00FFFF] font-bold py-3 rounded-xl btn-squishy flex items-center justify-center gap-2">
-          {t(language, 'installAppCta')}
-        </button>
-      )}
-
-      <div className="mt-4 rounded-xl overflow-hidden border border-white/10 bg-black/30">
-        <img src={rewardImages[rewardIndex]} alt={t(language, 'rewardText')} className="w-full h-24 object-cover" />
-        <p className="text-white/80 text-xs py-2">{t(language, 'rewardText')}</p>
+      <div className="mt-4 rounded-2xl overflow-hidden border border-[#FFD700]/30 bg-black/30 shadow-[0_0_24px_rgba(255,215,0,0.16)]">
+        <img src={rewardImages[rewardIndex]} alt={t(language, 'rewardText')} className="w-full h-32 object-cover" />
       </div>
 
       {/* Winner Testimonials (30+ accumulated, showing 5) */}
@@ -497,6 +462,58 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
           ))}
         </div>
       </div>
+
+      {currentUser && league && (
+        <div className="mt-4 rounded-xl border border-[#00FFFF]/20 bg-gradient-to-br from-[#00FFFF]/10 via-[#1A0B2E] to-[#FF0080]/10 p-4 text-left">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[#00FFFF] text-[11px] font-black tracking-[0.2em]">{t(language, 'homeLeagueTitle')}</p>
+            <p className="text-white/45 text-[10px]">{t(language, 'nextSync', { time: leagueCountdown })}</p>
+          </div>
+          <p className="text-white text-lg font-black mt-2">{league.displayName}</p>
+          <p className="text-white/55 text-[11px] mt-1">
+            {t(language, 'homeLeagueMeta', { players: String(league.leagueSize), totalLeagues: String(league.totalLeagues) })}
+          </p>
+          <div className="mt-3 rounded-lg bg-black/25 border border-white/10 p-3 space-y-2">
+            <p className="text-white text-sm font-semibold">
+              {leagueEntry
+                ? t(language, 'homeLeagueStanding', { rank: String(leagueEntry.rank), time: formatTime(currentUser.bestTime ?? leagueEntry.time) })
+                : t(language, 'homeLeaguePreview', { league: league.displayName })}
+            </p>
+            {leagueFocusText && (
+              <p className="text-[#00FFFF] text-xs font-semibold">{leagueFocusText}</p>
+            )}
+            {!leagueEntry && (
+              <p className="text-white/50 text-[11px]">{t(language, 'noRecordYet')}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4">
+        <p className="text-white/60 text-xs uppercase tracking-widest">{t(language, 'seasonLabel', { seasonNum: String(seasonNum) })}</p>
+        <h2 className="flex items-end justify-center gap-1 mt-1">
+          {remainingParts.h > 0 && <><span className="text-red-400 text-3xl font-black font-mono">{remainingParts.h}</span><span className="text-white/50 text-lg mb-1">{t(language, 'hoursUnit')}</span></>}
+          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.m).padStart(2, '0')}</span><span className="text-white/50 text-lg mb-1">{t(language, 'minutesUnit')}</span>
+          <span className="text-red-400 text-3xl font-black font-mono">{String(remainingParts.s).padStart(2, '0')}</span>
+          <span className="text-red-400 text-xl font-black font-mono">.{String(remainingParts.ms).padStart(2, '0')}</span>
+          <span className="text-white/50 text-lg mb-1">{t(language, 'secondsUnit')}</span>
+        </h2>
+      </div>
+
+      {useStore.getState().deferredPrompt && (
+        <button onClick={() => {
+          vibrate();
+          const promptEvent = useStore.getState().deferredPrompt;
+          promptEvent.prompt();
+          promptEvent.userChoice.then(() => useStore.setState({ deferredPrompt: null }));
+        }} className="w-full mt-3 bg-[#00FFFF]/20 border border-[#00FFFF]/50 text-[#00FFFF] font-bold py-3 rounded-xl btn-squishy flex items-center justify-center gap-2">
+          {t(language, 'installAppCta')}
+        </button>
+      )}
+
+      <p className="mt-5 px-2 text-[9px] leading-relaxed text-white/35">
+        {legalText} {t(language, 'termsApply')}
+      </p>
 
       {/* Login Modal */}
       <Modal isOpen={showLoginModal} onClose={() => setShowLoginModal(false)} title={t(language, 'loginRequired')}>
@@ -906,6 +923,8 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
   const historicalBest = playHistory.length > 1 ? Math.min(...playHistory.slice(0, -1).map((h) => h.value)) : Infinity;
   const isNewBest = playHistory.length === 1 || elapsed < historicalBest;
   const rank = myEntry?.rank ?? (league ? getProjectedRankForTime(league, elapsed) : (visibleLeaderboard.filter((e) => e.time < elapsed).length + 1));
+  const previousRank = Number.isFinite(historicalBest) && league ? getProjectedRankForTime(league, historicalBest) : null;
+  const rankGain = previousRank !== null ? Math.max(0, previousRank - rank) : 0;
   const percentile = visibleLeaderboard.length > 0 ? Math.ceil((rank / visibleLeaderboard.length) * 100) : 1;
   const top1Title = t(language, 'resultTitle');
   const top10Title = top1Title.replace('1%', '10%');
@@ -1149,6 +1168,14 @@ const ResultScreen = ({ elapsed, onShowHearts, grid, words }: { elapsed: number;
               {t(language, 'leagueFocusMilestone', { rank: String(focus.milestoneRank), gap: formatTime(focus.milestoneGapMs) })}
             </p>
           )}
+          {isNewBest && rankGain > 0 && (
+            <p className="text-[#FFE082] text-xs font-black">
+              {t(language, 'resultRankGain', { count: String(rankGain) })}
+            </p>
+          )}
+          <button onClick={() => { vibrate(); setView('LEADERBOARD'); }} className="w-full mt-2 rounded-lg border border-[#00FFFF]/40 bg-[#00FFFF]/10 text-[#00FFFF] py-2 text-xs font-bold btn-squishy">
+            {t(language, 'goToLeague')}
+          </button>
         </div>
       )}
 
@@ -1302,6 +1329,37 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const gapMs = getLeagueGap();
   const gapFormatted = formatTime(gapMs);
   const focus = league ? getLeagueFocus(league) : null;
+  const playHistory = currentUser?.gameHistory?.filter((entry) => entry.type === 'PLAY') ?? [];
+  const latestPlay = playHistory[playHistory.length - 1] ?? null;
+  const previousBest = playHistory.length > 1 ? Math.min(...playHistory.slice(0, -1).map((entry) => entry.value)) : null;
+  const bestTime = currentUser?.bestTime ?? myEntry?.time ?? null;
+  const latestIsCurrentBest = Boolean(latestPlay && bestTime !== null && latestPlay.value === bestTime);
+  const improvementMs = latestIsCurrentBest && previousBest !== null ? Math.max(0, previousBest - latestPlay!.value) : 0;
+  const improvementRate = previousBest ? improvementMs / Math.max(previousBest, 1) : 0;
+  const globalWinChance = Math.min(0.9, Math.max(0.05, improvementRate * 3.2));
+  const globalWindowActive = Boolean(league && latestPlay && Date.parse(latestPlay.date) > league.lastRefresh);
+  const userIsGlobalChampion = Boolean(
+    currentUser &&
+    bestTime !== null &&
+    latestIsCurrentBest &&
+    globalWindowActive &&
+    stableUnit(`${currentUser.id}:${latestPlay?.date}:${bestTime}`) < globalWinChance,
+  );
+  const globalChampion = userIsGlobalChampion && currentUser && bestTime !== null
+    ? {
+      nickname: currentUser.nickname,
+      country: currentUser.country,
+      avatarUrl: currentUser.avatarUrl,
+      time: bestTime,
+      isCurrentUser: true,
+    }
+    : {
+      nickname: 'GlobalStage_001',
+      country: 'KR',
+      avatarUrl: generateAvatarUrl('global-stage-001', 'GlobalStage_001'),
+      time: bestTime ? Math.max(1000, bestTime - Math.min(3000, Math.max(600, Math.round(bestTime * 0.12)))) : 22800,
+      isCurrentUser: false,
+    };
 
   // Guest view
   if (!currentUser) {
@@ -1374,6 +1432,19 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
           </div>
         </div>
       )}
+
+      <div className="mx-4 mt-3 rounded-2xl border border-[#FFD700]/60 bg-gradient-to-br from-[#FFD700]/20 via-[#FF0080]/15 to-[#00FFFF]/10 p-4 shadow-[0_0_24px_rgba(255,215,0,0.15)]">
+        <p className="text-[#FFE082] text-[11px] font-black tracking-[0.2em] mb-3">{t(language, 'globalChampionTitle')}</p>
+        <div className="flex items-center gap-3">
+          <div className="text-2xl">🏆</div>
+          <img src={globalChampion.avatarUrl} alt={globalChampion.nickname} className="w-10 h-10 rounded-full border border-[#FFD700]/70" />
+          <div className="flex-1 text-left min-w-0">
+            <p className={`font-black truncate ${globalChampion.isCurrentUser ? 'text-[#FFD700]' : 'text-white'}`}>{globalChampion.nickname}</p>
+            <p className="text-white/45 text-xs">{getCountryFlag(globalChampion.country)} {globalChampion.isCurrentUser ? t(language, 'globalChampionYou') : t(language, 'globalChampionHint')}</p>
+          </div>
+          <p className="font-mono text-[#00FFFF] text-sm font-bold">{formatTime(globalChampion.time)}</p>
+        </div>
+      </div>
 
       {/* No record state - show CTA */}
       {myEntry === undefined && (
@@ -1453,6 +1524,73 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
 // ─── 관리자(Admin) 화면 컴포넌트 ──────────────────────────────────
 // 로고를 3초 이상 길게 누르면 접근 가능한 숨겨진 화면.
 // 통계 확인, 강제 데이터 초기화, 가짜 봇 생성, 공지사항 작성 등의 운영 기능을 담당합니다.
+const SupportScreen = () => {
+  const { setView, currentUser, language, login, showRewardToast } = useStore();
+  const [subject, setSubject] = useState('');
+  const [message, setMessage] = useState('');
+  const [email, setEmail] = useState(currentUser?.email ?? '');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setEmail(currentUser?.email ?? '');
+  }, [currentUser?.email]);
+
+  const canSubmit = Boolean(currentUser && subject.trim() && message.trim() && /\S+@\S+\.\S+/.test(email.trim()));
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!currentUser) {
+      void login();
+      return;
+    }
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    try {
+      await submitSupportTicket({ userId: currentUser.id, email, subject, message });
+      setSubject('');
+      setMessage('');
+      showRewardToast(t(language, 'supportInquirySubmitted'));
+    } catch (error) {
+      console.error('[SupportScreen] Failed to submit support ticket:', error);
+      showRewardToast(t(language, 'supportInquiryFailed'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col bg-[#0D0518]">
+      <div className="p-4 flex items-center gap-4 border-b border-white/10 bg-[#1A0B2E]">
+        <button onClick={() => { vibrate(); setView('HOME'); }} className="text-white/70 hover:text-white btn-squishy"><ArrowLeft /></button>
+        <h2 className="text-xl font-black text-white">{t(language, 'supportInquiryTitle')}</h2>
+      </div>
+      <form onSubmit={handleSubmit} className="flex-1 p-4 space-y-4">
+        <p className="text-white/60 text-sm leading-relaxed">{t(language, 'supportInquiryDesc')}</p>
+        {!currentUser && (
+          <button type="button" onClick={() => { void login(); }} className="w-full rounded-xl bg-white text-black font-bold py-3 btn-squishy">
+            {t(language, 'loginWithGoogle')}
+          </button>
+        )}
+        <label className="block text-left">
+          <span className="text-white/70 text-xs font-bold">{t(language, 'supportInquirySubject')}</span>
+          <input value={subject} onChange={(event) => setSubject(event.target.value)} maxLength={120} className="mt-1 w-full rounded-xl bg-white/5 border border-white/15 p-3 text-white outline-none focus:border-[#00FFFF]" />
+        </label>
+        <label className="block text-left">
+          <span className="text-white/70 text-xs font-bold">{t(language, 'supportInquiryEmail')}</span>
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} maxLength={254} className="mt-1 w-full rounded-xl bg-white/5 border border-white/15 p-3 text-white outline-none focus:border-[#00FFFF]" />
+        </label>
+        <label className="block text-left">
+          <span className="text-white/70 text-xs font-bold">{t(language, 'supportInquiryMessage')}</span>
+          <textarea value={message} onChange={(event) => setMessage(event.target.value)} maxLength={5000} rows={8} className="mt-1 w-full rounded-xl bg-white/5 border border-white/15 p-3 text-white outline-none focus:border-[#00FFFF] resize-none" />
+        </label>
+        <button disabled={!canSubmit || submitting} className="w-full rounded-xl bg-[#00FFFF] text-black font-black py-3 btn-squishy disabled:opacity-40">
+          {submitting ? t(language, 'loadingAdmin') : t(language, 'supportInquirySubmit')}
+        </button>
+      </form>
+    </div>
+  );
+};
+
 const AdminScreen = () => {
   const {
     setView, notice, setNotice,
@@ -1477,6 +1615,8 @@ const AdminScreen = () => {
   const [adminSortBy, setAdminSortBy] = useState<'TIME' | 'HEARTS' | 'NEWEST'>('NEWEST');
   const [showBanned, setShowBanned] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [supportTicketsLoading, setSupportTicketsLoading] = useState(false);
 
   if (currentUser?.role !== 'ADMIN') {
     return <div className="flex-1 p-4 flex items-center justify-center text-white/50">{t(language, 'unauthorizedAccess')}</div>;
@@ -1489,6 +1629,14 @@ const AdminScreen = () => {
     setBotMean(botConfig.mean / 1000);
     setBotStd(botConfig.stdDev / 1000);
   }, [botConfig.mean, botConfig.stdDev]);
+
+  useEffect(() => {
+    setSupportTicketsLoading(true);
+    getSupportTickets()
+      .then(setSupportTickets)
+      .catch((error) => console.error('[AdminScreen] Failed to fetch support tickets:', error))
+      .finally(() => setSupportTicketsLoading(false));
+  }, []);
 
   const riskWarning = adminUsers.some((entry) => typeof entry.time === 'number' && entry.time <= 1000);
 
@@ -1558,6 +1706,45 @@ const AdminScreen = () => {
         <span>{t(language, 'totalLabel')} <strong className="text-white">{totalUsers}</strong></span>
         <span>{t(language, 'activeLabel')} <strong className="text-green-400">{activeUsers}</strong></span>
         <span>{t(language, 'bannedLabel')} <strong className="text-red-400">{bannedUsers}</strong></span>
+      </div>
+
+      <div className="bg-[#1A0B2E] rounded-xl p-4 border border-white/10 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-white font-semibold flex items-center gap-2"><MessageSquare size={16} /> {t(language, 'supportTicketsTitle')}</p>
+          <button
+            onClick={() => {
+              setSupportTicketsLoading(true);
+              getSupportTickets()
+                .then(setSupportTickets)
+                .catch((error) => console.error('[AdminScreen] Failed to fetch support tickets:', error))
+                .finally(() => setSupportTicketsLoading(false));
+            }}
+            className="text-[#00FFFF] text-xs btn-squishy"
+          >
+            {supportTicketsLoading ? t(language, 'loadingAdmin') : t(language, 'refresh')}
+          </button>
+        </div>
+        {supportTickets.length === 0 ? (
+          <p className="text-white/40 text-xs">{t(language, 'supportTicketsEmpty')}</p>
+        ) : (
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {supportTickets.slice(0, 20).map((ticket) => {
+              const created = resolveAdminUpdatedAt(ticket.createdAt);
+              return (
+                <div key={ticket.id} className="rounded-lg border border-white/10 bg-black/25 p-3 text-left">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-white font-bold text-sm">{ticket.subject}</p>
+                    <span className="text-[10px] text-[#00FFFF]">{created ? created.toLocaleString() : '-'}</span>
+                  </div>
+                  <a href={`mailto:${ticket.email}`} className="mt-1 inline-flex items-center gap-1 text-[#FFE082] text-xs underline">
+                    <Mail size={12} /> {ticket.email}
+                  </a>
+                  <p className="mt-2 text-white/65 text-xs whitespace-pre-wrap leading-relaxed">{ticket.message}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Season + Bots */}
@@ -2874,7 +3061,7 @@ export default function App() {
 
   // Handle browser back button (popstate mapping to SetView)
   useEffect(() => {
-    type BrowserHistoryState = { view?: 'HOME' | 'GAME' | 'LEADERBOARD' | 'ADMIN' | 'HISTORY' };
+    type BrowserHistoryState = { view?: 'HOME' | 'GAME' | 'LEADERBOARD' | 'ADMIN' | 'HISTORY' | 'SUPPORT' };
     const handlePopState = (e: PopStateEvent) => {
       const state = e.state as BrowserHistoryState | null;
       if (state && state.view) {
@@ -2902,6 +3089,7 @@ export default function App() {
       {currentView === 'GAME' && <GameScreen onShowHearts={() => setShowHeartsModal(true)} />}
       {currentView === 'LEADERBOARD' && <LeaderboardScreen onShowHearts={() => setShowHeartsModal(true)} />}
       {currentView === 'HISTORY' && <HistoryScreen />}
+      {currentView === 'SUPPORT' && <SupportScreen />}
       {currentView === 'ADMIN' && <AdminScreen />}
 
       <LanguageModal isOpen={showLanguageModal} onClose={() => setShowLanguageModal(false)} />

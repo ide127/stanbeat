@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { Menu, Heart, X, Trophy, History, Globe, LogOut, RefreshCw, XCircle, ShieldAlert, Play, HeartHandshake } from 'lucide-react';
+import { Menu, Heart, X, Trophy, History, Globe, LogOut, RefreshCw, XCircle, ShieldAlert, Play, HeartHandshake, MessageSquare } from 'lucide-react';
 import { useStore } from '../store';
 import { languageOptions, t } from '../i18n';
 
@@ -159,6 +159,7 @@ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () 
           <MenuItem icon={<HeartHandshake size={20} />} label={t(language, 'chargeHearts')} color="text-[#FF0080]" onClick={() => { toggleMenu(); onOpenHearts(); }} />
           <MenuItem icon={<Trophy size={20} />} label={t(language, 'rankingBoardTitle')} onClick={() => { toggleMenu(); setView('LEADERBOARD'); }} />
           <MenuItem icon={<History size={20} />} label={t(language, 'history')} onClick={() => { toggleMenu(); setView('HISTORY'); }} />
+          <MenuItem icon={<MessageSquare size={20} />} label={t(language, 'supportInquiryTitle')} color="text-[#00FFFF]" onClick={() => { toggleMenu(); setView('SUPPORT'); }} />
           <MenuItem icon={<Globe size={20} />} label={t(language, 'languageTitle')} onClick={() => { toggleMenu(); onOpenLanguage(); }} />
           {currentUser?.role === 'ADMIN' && (
             <MenuItem icon={<ShieldAlert size={20} />} label={t(language, 'adminTitle')} color="text-red-400" onClick={() => { toggleMenu(); setView('ADMIN'); }} />

@@ -226,7 +226,10 @@ async function main() {
     });
 
     const homeSnapshot = parseSnapshot(await callTool(port, 'screenshot', { mode: 'snapshot' }));
-    const playRef = Object.entries(homeSnapshot.refs).find(([, value]) => value?.name?.includes('PLAY NOW'))?.[0];
+    const playRef = Object.entries(homeSnapshot.refs).find(([, value]) => {
+      const name = String(value?.name ?? '');
+      return name.includes('BLACKPINK') && (name.includes('Start') || name.includes('PLAY'));
+    })?.[0];
     if (!playRef) {
       throw new Error('Could not find the home play button in Expect snapshot.');
     }

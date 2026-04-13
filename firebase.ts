@@ -8,6 +8,7 @@ import {
   type User as FirebaseUser,
 } from 'firebase/auth';
 import {
+  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -23,7 +24,7 @@ import {
 } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { runtimeConfig } from './runtimeConfig';
-import type { HistoryEvent } from './types';
+import type { HistoryEvent, SupportTicket } from './types';
 import { getStanbeatTestApi } from './devTestApi';
 
 const firebaseConfig = {
@@ -234,6 +235,25 @@ export async function getAdminGlobalUsers(): Promise<Array<Record<string, unknow
   });
 
   return Array.from(merged.values());
+}
+
+export async function submitSupportTicket(data: { userId: string; email: string; subject: string; message: string }): Promise<void> {
+  if (!db) throw new Error('[Firebase] Firestore not initialized. Cannot submit support ticket.');
+  await addDoc(collection(db, 'supportTickets'), {
+    userId: data.userId,
+    email: data.email.trim(),
+    subject: data.subject.trim(),
+    message: data.message.trim(),
+    status: 'open',
+    createdAt: serverTimestamp(),
+  });
+}
+
+export async function getSupportTickets(count: number = 100): Promise<SupportTicket[]> {
+  if (!db) return [];
+  const q = query(collection(db, 'supportTickets'), orderBy('createdAt', 'desc'), limit(count));
+  const snap = await getDocs(q);
+  return snap.docs.map((entry) => ({ id: entry.id, ...entry.data() } as SupportTicket));
 }
 
 export async function editUserHeartInFirestore(userId: string, hearts: number): Promise<void> {

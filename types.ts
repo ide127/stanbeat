@@ -46,7 +46,7 @@ export interface WordConfig {
   found: boolean;
 }
 
-export type ViewState = 'HOME' | 'GAME' | 'LEADERBOARD' | 'ADMIN' | 'HISTORY';
+export type ViewState = 'HOME' | 'GAME' | 'LEADERBOARD' | 'ADMIN' | 'HISTORY' | 'SUPPORT';
 
 export interface LeaderboardEntry {
   id: string;
@@ -134,4 +134,14 @@ export interface AdminUserRow {
   applixirUserId?: string;
   updatedAt?: AdminTimestampLike | string | number | Date;
   gameHistory?: HistoryEvent[];
+}
+
+export interface SupportTicket {
+  id: string;
+  userId: string;
+  email: string;
+  subject: string;
+  message: string;
+  status: 'open' | 'closed';
+  createdAt?: AdminTimestampLike | string | number | Date;
 }
