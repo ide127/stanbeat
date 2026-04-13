@@ -511,7 +511,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         </button>
       )}
 
-      <p className="mt-5 px-2 text-[9px] leading-relaxed text-white/35">
+      <p className="mt-5 px-2 text-[7px] leading-tight text-white/25">
         {legalText} {t(language, 'termsApply')}
       </p>
 
@@ -1333,18 +1333,22 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   const latestPlay = playHistory[playHistory.length - 1] ?? null;
   const previousBest = playHistory.length > 1 ? Math.min(...playHistory.slice(0, -1).map((entry) => entry.value)) : null;
   const bestTime = currentUser?.bestTime ?? myEntry?.time ?? null;
+  const leagueFirstTime = leaderboard.find((entry) => !entry.banned)?.time ?? league?.entries.find((entry) => !entry.banned)?.time ?? null;
   const latestIsCurrentBest = Boolean(latestPlay && bestTime !== null && latestPlay.value === bestTime);
   const improvementMs = latestIsCurrentBest && previousBest !== null ? Math.max(0, previousBest - latestPlay!.value) : 0;
   const improvementRate = previousBest ? improvementMs / Math.max(previousBest, 1) : 0;
   const globalWinChance = Math.min(0.9, Math.max(0.05, improvementRate * 3.2));
   const globalWindowActive = Boolean(league && latestPlay && Date.parse(latestPlay.date) > league.lastRefresh);
+  const userCanLeadGlobal = Boolean(bestTime !== null && leagueFirstTime !== null && bestTime <= leagueFirstTime);
   const userIsGlobalChampion = Boolean(
     currentUser &&
     bestTime !== null &&
+    userCanLeadGlobal &&
     latestIsCurrentBest &&
     globalWindowActive &&
     stableUnit(`${currentUser.id}:${latestPlay?.date}:${bestTime}`) < globalWinChance,
   );
+  const globalBaseline = leagueFirstTime ?? bestTime;
   const globalChampion = userIsGlobalChampion && currentUser && bestTime !== null
     ? {
       nickname: currentUser.nickname,
@@ -1357,7 +1361,7 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
       nickname: 'GlobalStage_001',
       country: 'KR',
       avatarUrl: generateAvatarUrl('global-stage-001', 'GlobalStage_001'),
-      time: bestTime ? Math.max(1000, bestTime - Math.min(3000, Math.max(600, Math.round(bestTime * 0.12)))) : 22800,
+      time: globalBaseline ? Math.max(1000, globalBaseline - Math.min(3000, Math.max(600, Math.round(globalBaseline * 0.12)))) : 22800,
       isCurrentUser: false,
     };
 
