@@ -33,6 +33,7 @@ import { applixirProvider } from './services/providers/ApplixirProvider';
 import { generateAvatarUrl } from './utils';
 import { type LeagueData, generateDisplayLeagueName, refreshLeagueIfNeeded, getGapToFirst, getRefreshCountdown, generateViewOnlyLeague, getMsUntilNextUtcMidnight } from './league';
 import { markLocalApplixirRewardClaimed, recordLocalApplixirReward, waitForApplixirReward } from './services/rewards/applixirRewards';
+import { resolveApplixirUserId } from './services/rewards/applixirIdentity';
 import { getRuntimeSiteUrl, runtimeConfig } from './runtimeConfig';
 import { getStanbeatTestApi } from './devTestApi';
 import { buildFandomUrl, persistFandomId, readStoredFandomId, resolveFandomId, type FandomId } from './features/fandom';
@@ -234,6 +235,7 @@ const buildUserProfilePayload = (user: User): Record<string, unknown> => ({
   avatarUrl: user.avatarUrl,
   country: user.country,
   agreedToTerms: user.agreedToTerms,
+  applixirUserId: user.applixirUserId,
   gameHistory: sanitizeHistory(user.gameHistory),
 });
 
@@ -544,9 +546,11 @@ const buildUserFromAuth = async (
     referredBy: referralCode,
     referralRewardGranted: false,
     rewardedVideoStreak: 0,
+    applixirUserId: resolveApplixirUserId(),
   };
 
   const mergedProfile = fbProfile ?? {};
+  user.applixirUserId = resolveApplixirUserId(mergedProfile.applixirUserId, existingUser?.applixirUserId, user.applixirUserId);
   user.nickname = String(mergedProfile.nickname ?? user.nickname);
   user.avatarUrl = String(mergedProfile.avatarUrl ?? user.avatarUrl);
   user.country = String(mergedProfile.country ?? user.country);
@@ -572,6 +576,7 @@ const buildUserFromAuth = async (
     user.referredBy = existingUser.referredBy;
     user.referralRewardGranted = Boolean(existingUser.referralRewardGranted);
     user.rewardedVideoStreak = Math.max(0, Number(existingUser.rewardedVideoStreak ?? 0));
+    user.applixirUserId = resolveApplixirUserId(existingUser.applixirUserId, user.applixirUserId);
     user.lastDailyHeart = existingUser.lastDailyHeart;
     user.banned = existingUser.banned;
   }
@@ -653,6 +658,7 @@ export const useStore = create<AppState>((set, get) => ({
     gameHistory: Array.isArray(savedUser.gameHistory) ? savedUser.gameHistory.slice(-100) : [],
     referralRewardGranted: Boolean(savedUser.referralRewardGranted),
     rewardedVideoStreak: Math.max(0, Number(savedUser.rewardedVideoStreak ?? 0)),
+    applixirUserId: resolveApplixirUserId(savedUser.applixirUserId),
   } : null,
   currentView: 'HOME',
   activeFandomId: readStoredFandomId(),
@@ -1497,7 +1503,7 @@ export const useStore = create<AppState>((set, get) => ({
     // This opens the ad player in a popup. Must be called from a user gesture.
     let adResult: 'completed' | 'skipped' | 'error' | 'noAds' | 'configMissing' | 'invalidConfig';
     try {
-      adResult = await applixirProvider.showRewardedVideo(userId);
+      adResult = await applixirProvider.showRewardedVideo(user.applixirUserId);
     } catch (err) {
       console.error('[store] Applixir showRewardedVideo error:', err);
       return 'failed';

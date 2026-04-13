@@ -28,6 +28,7 @@ export interface User {
   referredBy: string | null;
   referralRewardGranted: boolean;
   rewardedVideoStreak: number;
+  applixirUserId: string;
 }
 
 export interface GridCell {
@@ -129,6 +130,7 @@ export interface AdminUserRow {
   banned?: boolean;
   referralCode?: string;
   referredBy?: string | null;
+  applixirUserId?: string;
   updatedAt?: AdminTimestampLike | string | number | Date;
   gameHistory?: HistoryEvent[];
 }

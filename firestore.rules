@@ -38,6 +38,7 @@ service cloud.firestore {
         'referredBy',
         'referralRewardGranted',
         'rewardedVideoStreak',
+        'applixirUserId',
         'updatedAt'
       ])
         && data.nickname is string
@@ -57,7 +58,9 @@ service cloud.firestore {
         && (data.referredBy == null || data.referredBy is string)
         && data.referralRewardGranted == false
         && data.rewardedVideoStreak is int
-        && data.rewardedVideoStreak == 0;
+        && data.rewardedVideoStreak == 0
+        && data.applixirUserId is string
+        && data.applixirUserId.matches('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
     }
 
     function validSelfUserUpdate() {
@@ -67,6 +70,7 @@ service cloud.firestore {
         'avatarUrl',
         'country',
         'agreedToTerms',
+        'applixirUserId',
         'gameHistory',
         'updatedAt'
       ])
@@ -84,7 +88,14 @@ service cloud.firestore {
         && request.resource.data.referralCode == resource.data.referralCode
         && request.resource.data.referredBy == resource.data.referredBy
         && request.resource.data.referralRewardGranted == resource.data.referralRewardGranted
-        && request.resource.data.rewardedVideoStreak == resource.data.rewardedVideoStreak;
+        && request.resource.data.rewardedVideoStreak == resource.data.rewardedVideoStreak
+        && request.resource.data.applixirUserId is string
+        && request.resource.data.applixirUserId.matches('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
+        && (
+          !('applixirUserId' in resource.data) ||
+          resource.data.applixirUserId == null ||
+          request.resource.data.applixirUserId == resource.data.applixirUserId
+        );
     }
 
     match /users/{userId} {

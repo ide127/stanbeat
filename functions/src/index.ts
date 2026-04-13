@@ -27,6 +27,7 @@ type UserDoc = LooseRecord & {
   rewardedVideoStreak?: unknown;
   referralRewardGranted?: unknown;
   referredBy?: unknown;
+  applixirUserId?: unknown;
   banned?: unknown;
   nickname?: unknown;
   country?: unknown;
@@ -56,6 +57,10 @@ function normalizePayload(value: unknown): LooseRecord {
 
 function isFailureStatus(status: string | undefined): boolean {
   return !!status && /(error|fail|declin|skip|manual|cancel|noads|blocked|timeout)/i.test(status);
+}
+
+function isValidApplixirUserId(value: string | undefined): value is string {
+  return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function sanitizeHistory(history: unknown): HistoryEvent[] {
@@ -127,6 +132,27 @@ async function markReferralGrantedInUser(transaction: admin.firestore.Transactio
   }, { merge: true });
 }
 
+async function resolveApplixirRewardUser(callbackUserId: string): Promise<{ userId: string; applixirUserId: string | null } | null> {
+  const directUserSnap = await db.collection('users').doc(callbackUserId).get();
+  if (directUserSnap.exists) {
+    const directUserData = directUserSnap.data() as UserDoc;
+    const directApplixirUserId = firstParam(directUserData.applixirUserId);
+    return {
+      userId: directUserSnap.id,
+      applixirUserId: isValidApplixirUserId(directApplixirUserId) ? directApplixirUserId : null,
+    };
+  }
+
+  if (!isValidApplixirUserId(callbackUserId)) return null;
+
+  const usersSnap = await db.collection('users')
+    .where('applixirUserId', '==', callbackUserId)
+    .limit(1)
+    .get();
+  const userDoc = usersSnap.docs[0];
+  return userDoc ? { userId: userDoc.id, applixirUserId: callbackUserId } : null;
+}
+
 export const applixirCallback = functions.https.onRequest(async (req, res) => {
   const query = normalizePayload(req.query);
   const body = normalizePayload(req.body);
@@ -150,23 +176,49 @@ export const applixirCallback = functions.https.onRequest(async (req, res) => {
     return;
   }
 
-  const userId = firstParam(
+  const callbackUserId = firstParam(
     query.userId,
+    query.userid,
     query.user_id,
+    query.user,
+    query.applixirUserId,
+    query.applixir_user_id,
+    query.ppid,
     query.subid1,
     query.subId1,
+    query.subid,
+    query.sub_id,
+    query.playerId,
+    query.player_id,
     query.uid,
     body.userId,
+    body.userid,
     body.user_id,
+    body.user,
+    body.applixirUserId,
+    body.applixir_user_id,
+    body.ppid,
     body.subid1,
     body.subId1,
+    body.subid,
+    body.sub_id,
+    body.playerId,
+    body.player_id,
     body.uid,
   );
-  if (!userId) {
+  if (!callbackUserId) {
     console.error('[AppLixir Callback] Missing user identifier');
     res.status(400).send('Missing user identifier');
     return;
   }
+
+  const resolvedUser = await resolveApplixirRewardUser(callbackUserId);
+  if (!resolvedUser) {
+    console.error(`[AppLixir Callback] Unknown AppLixir user identifier: ${callbackUserId}`);
+    res.status(400).send('Unknown user identifier');
+    return;
+  }
+  const { userId, applixirUserId } = resolvedUser;
 
   const status = firstParam(query.status, query.event, query.type, body.status, body.event, body.type);
   if (isFailureStatus(status)) {
@@ -196,6 +248,8 @@ export const applixirCallback = functions.https.onRequest(async (req, res) => {
       userId,
       payout,
       provider: 'applixir',
+      applixirUserId,
+      callbackUserId,
       providerEvent: status ?? 'completed',
       type: 'rewarded_video_applixir',
       createdAt: serverTimestamp(),

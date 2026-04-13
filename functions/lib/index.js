@@ -35,6 +35,9 @@ function normalizePayload(value) {
 function isFailureStatus(status) {
     return !!status && /(error|fail|declin|skip|manual|cancel|noads|blocked|timeout)/i.test(status);
 }
+function isValidApplixirUserId(value) {
+    return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
 function sanitizeHistory(history) {
     if (!Array.isArray(history))
         return [];
@@ -95,6 +98,25 @@ async function markReferralGrantedInUser(transaction, referredUserId) {
         updatedAt: serverTimestamp(),
     }, { merge: true });
 }
+async function resolveApplixirRewardUser(callbackUserId) {
+    const directUserSnap = await db.collection('users').doc(callbackUserId).get();
+    if (directUserSnap.exists) {
+        const directUserData = directUserSnap.data();
+        const directApplixirUserId = firstParam(directUserData.applixirUserId);
+        return {
+            userId: directUserSnap.id,
+            applixirUserId: isValidApplixirUserId(directApplixirUserId) ? directApplixirUserId : null,
+        };
+    }
+    if (!isValidApplixirUserId(callbackUserId))
+        return null;
+    const usersSnap = await db.collection('users')
+        .where('applixirUserId', '==', callbackUserId)
+        .limit(1)
+        .get();
+    const userDoc = usersSnap.docs[0];
+    return userDoc ? { userId: userDoc.id, applixirUserId: callbackUserId } : null;
+}
 exports.applixirCallback = functions.https.onRequest(async (req, res) => {
     var _a, _b;
     const query = normalizePayload(req.query);
@@ -107,12 +129,19 @@ exports.applixirCallback = functions.https.onRequest(async (req, res) => {
         res.status(403).send('Forbidden');
         return;
     }
-    const userId = firstParam(query.userId, query.user_id, query.subid1, query.subId1, query.uid, body.userId, body.user_id, body.subid1, body.subId1, body.uid);
-    if (!userId) {
+    const callbackUserId = firstParam(query.userId, query.userid, query.user_id, query.user, query.applixirUserId, query.applixir_user_id, query.ppid, query.subid1, query.subId1, query.subid, query.sub_id, query.playerId, query.player_id, query.uid, body.userId, body.userid, body.user_id, body.user, body.applixirUserId, body.applixir_user_id, body.ppid, body.subid1, body.subId1, body.subid, body.sub_id, body.playerId, body.player_id, body.uid);
+    if (!callbackUserId) {
         console.error('[AppLixir Callback] Missing user identifier');
         res.status(400).send('Missing user identifier');
         return;
     }
+    const resolvedUser = await resolveApplixirRewardUser(callbackUserId);
+    if (!resolvedUser) {
+        console.error(`[AppLixir Callback] Unknown AppLixir user identifier: ${callbackUserId}`);
+        res.status(400).send('Unknown user identifier');
+        return;
+    }
+    const { userId, applixirUserId } = resolvedUser;
     const status = firstParam(query.status, query.event, query.type, body.status, body.event, body.type);
     if (isFailureStatus(status)) {
         console.warn(`[AppLixir Callback] Ignoring failure status "${status}" for user ${userId}`);
@@ -128,6 +157,8 @@ exports.applixirCallback = functions.https.onRequest(async (req, res) => {
             userId,
             payout,
             provider: 'applixir',
+            applixirUserId,
+            callbackUserId,
             providerEvent: status !== null && status !== void 0 ? status : 'completed',
             type: 'rewarded_video_applixir',
             createdAt: serverTimestamp(),

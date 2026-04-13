@@ -89,6 +89,7 @@ function buildInitScript() {
     localStorage.removeItem('stanbeat_leaderboard');
 
     const history = [];
+    const applixirUserId = '123e4567-e89b-42d3-a456-426614174000';
     const user = {
       hearts: 2,
       bestTime: null,
@@ -141,7 +142,12 @@ function buildInitScript() {
         },
       },
       rewardedVideo: {
-        showRewardedVideo: async () => 'completed',
+        showRewardedVideo: async (userId) => {
+          if (userId !== applixirUserId) {
+            throw new Error('Expected AppLixir userId UUID, got ' + userId);
+          }
+          return 'completed';
+        },
         waitForReward: async () => ({
           id: 'mock-reward-1',
           userId: 'harness-user',
@@ -192,6 +198,7 @@ async function main() {
               referredBy: null,
               referralRewardGranted: false,
               rewardedVideoStreak: 0,
+              applixirUserId: '123e4567-e89b-42d3-a456-426614174000',
             },
           termsAccepted: true,
           currentView: 'HOME',
