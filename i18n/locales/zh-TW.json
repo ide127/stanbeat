@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "您還無法領取6小時登入獎勵。",
   "maxHeartsReached": "您最多只能儲存 3 顆心。請先玩遊戲。",
   "stdDevGaussian": "標準差 σ",
-  "loginSessionSyncFailed": "Google 身份验证已完成，但无法完成 StanBeat 帐户同步。 We canceled your session.請再試一次。",
   "leaveGameTitle": "我該退出遊戲嗎？",
   "leaveGameMessage": "如果你現在離開，這場比賽就會被取消，紅心也不會被回饋。",
   "cancelAction": "繼續玩",

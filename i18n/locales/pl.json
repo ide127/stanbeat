@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "Nie możesz jeszcze otrzymać nagrody za 6 godzin logowania.",
   "maxHeartsReached": "Możesz przechowywać maksymalnie 3 serca. Najpierw zagraj w grę.",
   "stdDevGaussian": "odchylenie standardowe σ",
-  "loginSessionSyncFailed": "Uwierzytelnianie Google zostało zakończone, ale nie można było ukończyć synchronizacji konta StanBeat. Anulowaliśmy Twoją sesję. Spróbuj ponownie.",
   "leaveGameTitle": "Czy powinienem zrezygnować z gry?",
   "leaveGameMessage": "Jeśli teraz opuścisz grę, gra zostanie anulowana, a serca nie zostaną zwrócone.",
   "cancelAction": "graj dalej",

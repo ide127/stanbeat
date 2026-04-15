@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "Vous ne pouvez pas encore recevoir la récompense de connexion de 6 heures.",
   "maxHeartsReached": "Vous ne pouvez stocker que 3 cœurs maximum. Veuillez d'abord jouer au jeu.",
   "stdDevGaussian": "écart type σ",
-  "loginSessionSyncFailed": "L'authentification Google a été terminée, mais la synchronisation du compte StanBeat n'a pas pu être terminée. Nous avons annulé votre séance. Veuillez réessayer.",
   "leaveGameTitle": "Dois-je quitter le jeu?",
   "leaveGameMessage": "Si vous partez maintenant, cette pièce sera annulée et les cœurs ne seront pas restitués.",
   "cancelAction": "continue à jouer",

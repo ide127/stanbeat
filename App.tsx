@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, DollarSign, Mail, MessageSquare, Play, RefreshCw, Settings, Share2, ShieldAlert, Trash2, ToggleLeft, ToggleRight, Trophy, Users, Video } from 'lucide-react';
 import { Layout, Modal } from './components/Layout';
 import { languageOptions, t } from './i18n';
-import { useStore, detectLanguageFromIP, isRewardedVideoWaitActive, type AdConfig } from './store';
+import { useStore, detectLanguageFromIP, isAuthBootstrapPending, isRewardedVideoWaitActive, type AdConfig } from './store';
 import { AdminUserRow, DeferredInstallPrompt, GridCell, WordConfig, HistoryEvent, SupportTicket } from './types';
 import { formatTime, generateAvatarUrl, generateGrid, getCountryFlag, getSolutionCells, playSfx } from './utils';
 import { getCurrentSeasonNumber, generateGuestShowcase, getLeagueFocus, getMsUntilNextUtcMidnight, getProjectedRankForTime } from './league';
@@ -2754,6 +2754,42 @@ const QuizModal = ({ isOpen, onClose, onSolve }: { isOpen: boolean; onClose: () 
 };
 
 // Hearts modal
+const AdFlowIndicator = ({ phase, text }: { phase: 'loading' | 'watching' | 'validating'; text: string }) => {
+  const palette = phase === 'validating'
+    ? {
+      ringA: 'border-t-[#FFE082] border-r-[#FF0080]',
+      ringB: 'border-b-[#00FFFF] border-l-[#FFE082]',
+      core: 'from-[#FFE082] via-white to-[#FF0080]',
+      label: 'text-[#FFE082]',
+    }
+    : phase === 'watching'
+      ? {
+        ringA: 'border-t-[#00FFFF] border-r-[#8CF8FF]',
+        ringB: 'border-b-[#FF0080] border-l-[#00FFFF]',
+        core: 'from-[#00FFFF] via-white to-[#8CF8FF]',
+        label: 'text-[#8CF8FF]',
+      }
+      : {
+        ringA: 'border-t-[#00FFFF] border-r-[#FF0080]',
+        ringB: 'border-b-[#8CF8FF] border-l-[#00FFFF]',
+        core: 'from-[#00FFFF] via-white to-[#FF0080]',
+        label: 'text-[#00FFFF]',
+      };
+
+  return (
+    <div className="mt-3 flex flex-col items-center gap-2 rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-center">
+      <div className="relative h-12 w-12" aria-hidden="true">
+        <span className="absolute inset-0 rounded-full border border-white/10" />
+        <span className={`absolute inset-0 rounded-full border-2 border-transparent ${palette.ringA} animate-spin`} />
+        <span className="absolute inset-[6px] rounded-full border border-white/10" />
+        <span className={`absolute inset-[6px] rounded-full border-2 border-transparent ${palette.ringB} animate-[spin_1.35s_linear_infinite_reverse]`} />
+        <span className={`absolute inset-[15px] rounded-full bg-gradient-to-br ${palette.core} shadow-[0_0_18px_rgba(255,255,255,0.45)]`} />
+      </div>
+      <p className={`text-sm font-semibold ${palette.label}`}>{text}</p>
+    </div>
+  );
+};
+
 const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
   const {
     currentUser, claimDailyHeart, language, getReferralLink, showRewardToast,
@@ -2763,6 +2799,7 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
   const [linkCopied, setLinkCopied] = useState(false);
   const [adFlowPhase, setAdFlowPhase] = useState<'idle' | 'loading' | 'watching' | 'validating'>('idle');
   const [showQuiz, setShowQuiz] = useState(false);
+  const previousHeartsRef = useRef(currentUser?.hearts ?? 0);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -2804,6 +2841,28 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    const hearts = currentUser?.hearts ?? 0;
+    if (!isOpen) {
+      previousHeartsRef.current = hearts;
+      return;
+    }
+
+    const hadRewardedHeartIncrease = adFlowPhase !== 'idle' && hearts > previousHeartsRef.current;
+    previousHeartsRef.current = hearts;
+
+    if (!hadRewardedHeartIncrease) return;
+
+    setAdFlowPhase('idle');
+    onClose();
+  }, [adFlowPhase, currentUser?.hearts, isOpen, onClose]);
+
+  const finalizeAdFlow = (closeModal: boolean = false) => {
+    setAdFlowPhase('idle');
+    if (!closeModal) return;
+    window.setTimeout(() => onClose(), 120);
+  };
+
   const startAdFlow = async () => {
     if (isAdBusy) return;
     setAdFlowPhase('loading');
@@ -2811,11 +2870,10 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
       const rewardState = await watchRewardedAd({ onPhase: setAdFlowPhase });
       if (rewardState === 'rewarded') {
         useStore.getState().showRewardToast(t(language, 'heartEarned'));
-        setAdFlowPhase('idle');
-        onClose();
+        finalizeAdFlow(true);
       } else if (rewardState === 'capped') {
         useStore.getState().showRewardToast(t(language, 'maxHeartsReached'));
-        setAdFlowPhase('idle');
+        finalizeAdFlow(false);
       } else if (rewardState === 'progressed') {
         const { videoWatchCount: nextWatchCount, adConfig: nextAdConfig } = useStore.getState();
         useStore.getState().showRewardToast(t(language, 'videoProgress', {
@@ -2823,13 +2881,13 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
           total: String(nextAdConfig.videosPerHeart),
           reward: String(nextAdConfig.rewardedVideoRewardHearts),
         }));
-        setAdFlowPhase('idle');
+        finalizeAdFlow(false);
       } else {
-        setAdFlowPhase('idle');
+        finalizeAdFlow(false);
       }
     } catch (err) {
       console.error('[HeartsModal] Ad error:', err);
-      setAdFlowPhase('idle');
+      finalizeAdFlow(false);
     }
   };
 
@@ -2905,11 +2963,7 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
               className="w-full rounded-xl p-3 bg-[#00FFFF] text-black font-bold flex items-center justify-center gap-2 btn-squishy disabled:opacity-50"
             >
               {isAdBusy ? (
-                <span className="relative inline-flex h-5 w-5 items-center justify-center" aria-hidden="true">
-                  <span className="absolute inset-0 rounded-full border-2 border-black/15" />
-                  <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-black border-r-black/80 animate-spin" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-black/75" />
-                </span>
+                <RefreshCw size={18} className="animate-spin" aria-hidden="true" />
               ) : (
                 <Video size={18} />
               )}
@@ -2917,9 +2971,7 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
             </button>
             <div className="flex flex-col items-center">
               {adStatusText && (
-                <p className="text-[12px] text-white/75 mt-2 text-center leading-relaxed">
-                  {adStatusText}
-                </p>
+                <AdFlowIndicator phase={adFlowPhase === 'idle' ? 'loading' : adFlowPhase} text={adStatusText} />
               )}
               <p className="text-[12px] text-[#00FFFF] mt-1 font-semibold">
                 {t(language, 'videoProgress', {
@@ -3052,6 +3104,9 @@ export default function App() {
     if (!runtimeConfig.capabilities.login) return undefined;
     return onAuthStateChanged((authUser) => {
       const state = useStore.getState();
+      if (isAuthBootstrapPending()) {
+        return;
+      }
       if (!authUser) {
         if (state.currentUser) {
           state.logout();

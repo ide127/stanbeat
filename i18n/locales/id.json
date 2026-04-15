@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "Anda belum dapat menerima hadiah login 6 jam.",
   "maxHeartsReached": "Anda hanya dapat menyimpan hingga 3 hati. Silakan mainkan gamenya terlebih dahulu.",
   "stdDevGaussian": "simpangan baku σ",
-  "loginSessionSyncFailed": "Otentikasi Google telah selesai, tetapi sinkronisasi akun StanBeat tidak dapat diselesaikan. Kami membatalkan sesi Anda. Silakan coba lagi.",
   "leaveGameTitle": "Haruskah saya keluar dari permainan?",
   "leaveGameMessage": "Jika Anda pergi sekarang, pertunjukan ini akan dibatalkan dan hati tidak akan dikembalikan.",
   "cancelAction": "terus bermain",

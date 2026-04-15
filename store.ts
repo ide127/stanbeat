@@ -25,6 +25,7 @@ import {
   saveBotConfig,
   saveRandConfig,
   saveUserProfile,
+  syncUserProfileRemote,
   submitPlayResultRemote,
   unbanUserInFirestore as unbanUserInFs,
   type ServerUserSnapshot,
@@ -223,10 +224,13 @@ const FREE_HEART_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 let rewardToastTimeout: ReturnType<typeof setTimeout> | null = null;
 let pendingRewardedVideoWaitUserId: string | null = null;
+let authBootstrapInProgress = false;
 
 export const isRewardedVideoWaitActive = (userId?: string | null): boolean => {
   return Boolean(userId && pendingRewardedVideoWaitUserId === userId);
 };
+
+export const isAuthBootstrapPending = (): boolean => authBootstrapInProgress;
 
 const sanitizeHistory = (history: unknown): HistoryEvent[] => {
   if (!Array.isArray(history)) return [];
@@ -250,16 +254,22 @@ const buildUserProfilePayload = (user: User): Record<string, unknown> => ({
 });
 
 const buildInitialUserPayload = (user: User): Record<string, unknown> => ({
-  ...buildUserProfilePayload(user),
-  hearts: user.hearts,
-  bestTime: user.bestTime,
-  role: user.role,
-  lastDailyHeart: user.lastDailyHeart,
-  banned: user.banned,
+  nickname: user.nickname,
+  email: user.email,
+  avatarUrl: user.avatarUrl,
+  country: user.country,
+  hearts: 1,
+  bestTime: null,
+  role: 'USER',
+  lastDailyHeart: null,
+  agreedToTerms: user.agreedToTerms,
+  banned: false,
+  gameHistory: [],
   referralCode: user.referralCode,
   referredBy: user.referredBy,
-  referralRewardGranted: user.referralRewardGranted,
-  rewardedVideoStreak: user.rewardedVideoStreak,
+  referralRewardGranted: false,
+  rewardedVideoStreak: 0,
+  applixirUserId: user.applixirUserId,
 });
 
 const syncUserIntoEntry = (entry: LeaderboardEntry, user: User): LeaderboardEntry => {
@@ -309,7 +319,7 @@ const commitUserState = (
 
 const persistUserProfileRemote = async (user: User, useBootstrapPayload: boolean = false): Promise<void> => {
   if (!isFirebaseEnabled || !user.id) return;
-  await saveUserProfile(user.id, useBootstrapPayload ? buildInitialUserPayload(user) : buildUserProfilePayload(user));
+  await syncUserProfileRemote(useBootstrapPayload ? buildInitialUserPayload(user) : buildUserProfilePayload(user), useBootstrapPayload);
 };
 
 const clearLocalSessionState = (
@@ -626,18 +636,13 @@ const buildUserFromAuth = async (
   if (mergedProfile.banned !== undefined) user.banned = Boolean(mergedProfile.banned);
 
   if (!fbProfile && existingUser && existingUser.id === user.id) {
-    user.hearts = existingUser.hearts;
-    user.bestTime = existingUser.bestTime;
-    user.gameHistory = sanitizeHistory(existingUser.gameHistory);
     user.agreedToTerms = existingUser.agreedToTerms;
-    user.referralCode = existingUser.referralCode;
+    user.nickname = existingUser.nickname || user.nickname;
+    user.avatarUrl = existingUser.avatarUrl || user.avatarUrl;
+    user.country = existingUser.country || user.country;
+    user.referralCode = existingUser.referralCode || user.referralCode;
     user.referredBy = existingUser.referredBy;
-    user.referralRewardGranted = Boolean(existingUser.referralRewardGranted);
-    user.rewardedVideoStreak = Math.max(0, Number(existingUser.rewardedVideoStreak ?? 0));
     user.applixirUserId = resolveApplixirUserId(existingUser.applixirUserId, user.applixirUserId);
-    user.lastDailyHeart = existingUser.lastDailyHeart;
-    user.nextFreeHeartAt = existingUser.nextFreeHeartAt ?? getNextFreeHeartAt(user.lastDailyHeart);
-    user.banned = existingUser.banned;
   }
 
   return {
@@ -998,6 +1003,9 @@ export const useStore = create<AppState>((set, get) => ({
   // ─── 인증 (Auth) 로직 ─────────────────────────────────────────────────────
   // 구글 로그인을 처리하고 유저 데이터를 초기화하거나 기존 데이터를 불러오는 함수
   login: async () => {
+    if (authBootstrapInProgress) {
+      return false;
+    }
     const urlParams = new URLSearchParams(window.location.search);
     const refCode = urlParams.get('ref');
     const canonicalDevAuthUrl = getCanonicalDevAuthUrl();
@@ -1018,6 +1026,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     let authenticatedUser: FirebaseUser | null = null;
+    authBootstrapInProgress = true;
     try {
       const userAgent = navigator.userAgent || navigator.vendor || (window as Window & { opera?: string }).opera || '';
       const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads|TikTok|Daum/i.test(userAgent);
@@ -1086,16 +1095,20 @@ export const useStore = create<AppState>((set, get) => ({
         }
         get().showAlertDialog({
           title: t(get().language, 'loginRequired'),
-          message: authenticatedUser ? t(get().language, 'loginSessionSyncFailed') : t(get().language, 'loginFailed'),
+          message: t(get().language, 'loginFailed'),
           tone: 'error',
         });
       }
       return false;
+    } finally {
+      authBootstrapInProgress = false;
     }
   },
 
   restoreSessionFromAuth: async (authUser) => {
     if (!isFirebaseEnabled) return;
+    if (authBootstrapInProgress) return;
+    if (get().currentUser?.id === authUser.uid) return;
 
     try {
       const { user, useBootstrapPayload } = await buildUserFromAuth(authUser, null);
@@ -1135,7 +1148,7 @@ export const useStore = create<AppState>((set, get) => ({
       clearLocalSessionState(set, get().adminStatsUnsubscribe);
       get().showAlertDialog({
         title: t(get().language, 'loginRequired'),
-        message: t(get().language, 'loginSessionSyncFailed'),
+        message: t(get().language, 'loginFailed'),
         tone: 'error',
       });
     }

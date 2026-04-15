@@ -13,8 +13,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(userId));
     }
 
+    function hasUserDoc(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
     function isAdmin() {
-      return signedIn() && userDoc(request.auth.uid).data.role == 'ADMIN';
+      return signedIn() && hasUserDoc(request.auth.uid) && userDoc(request.auth.uid).data.role == 'ADMIN';
     }
 
     function safeGameHistory(value) {

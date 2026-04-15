@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "Você ainda não pode receber a recompensa de login de 6 horas.",
   "maxHeartsReached": "Você só pode armazenar até 3 corações. Por favor, jogue o jogo primeiro.",
   "stdDevGaussian": "desvio padrão σ",
-  "loginSessionSyncFailed": "A autenticação do Google foi concluída, mas a sincronização da conta StanBeat não pôde ser concluída. Cancelamos sua sessão. Por favor, tente novamente.",
   "leaveGameTitle": "Devo sair do jogo?",
   "leaveGameMessage": "Se você sair agora, esta jogada será cancelada e os corações não serão devolvidos.",
   "cancelAction": "continue jogando",

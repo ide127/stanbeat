@@ -138,6 +138,25 @@ function buildUserSnapshot(userData: UserDoc): LooseRecord {
   };
 }
 
+function sanitizeUserProfilePayload(payload: LooseRecord) {
+  const applixirUserId = firstParam(payload.applixirUserId);
+  if (!isValidApplixirUserId(applixirUserId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Invalid applixirUserId');
+  }
+
+  return {
+    nickname: firstParam(payload.nickname) ?? '',
+    email: firstParam(payload.email) ?? '',
+    avatarUrl: firstParam(payload.avatarUrl) ?? '',
+    country: firstParam(payload.country) ?? 'KR',
+    agreedToTerms: Boolean(payload.agreedToTerms),
+    applixirUserId,
+    gameHistory: sanitizeHistory(payload.gameHistory),
+    referralCode: firstParam(payload.referralCode),
+    referredBy: firstParam(payload.referredBy) ?? null,
+  };
+}
+
 async function bumpGlobalRevenue(revenueDelta: number): Promise<void> {
   if (!revenueDelta) return;
   await db.collection('stats').doc('global').set({
@@ -414,6 +433,61 @@ export const consumeHeartForGame = functions.https.onCall(async (request) => {
   });
 
   return response;
+});
+
+export const syncUserProfile = functions.https.onCall(async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new functions.https.HttpsError('unauthenticated', 'Login required');
+  }
+
+  const payload = normalizePayload(request.data);
+  const profile = sanitizeUserProfilePayload(normalizePayload(payload.profile));
+  const bootstrap = Boolean(payload.bootstrap);
+  const userRef = db.collection('users').doc(userId);
+
+  await db.runTransaction(async (transaction) => {
+    const userSnap = await transaction.get(userRef);
+
+    if (!userSnap.exists) {
+      transaction.set(userRef, {
+        nickname: profile.nickname,
+        email: profile.email,
+        avatarUrl: profile.avatarUrl,
+        country: profile.country,
+        hearts: 1,
+        bestTime: null,
+        role: 'USER',
+        lastDailyHeart: null,
+        agreedToTerms: profile.agreedToTerms,
+        banned: false,
+        gameHistory: [],
+        referralCode: profile.referralCode ?? userId.slice(0, 8),
+        referredBy: profile.referredBy,
+        referralRewardGranted: false,
+        rewardedVideoStreak: 0,
+        applixirUserId: profile.applixirUserId,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    const existingUser = userSnap.data() as UserDoc;
+    transaction.set(userRef, {
+      nickname: profile.nickname || String(existingUser.nickname ?? ''),
+      email: profile.email,
+      avatarUrl: profile.avatarUrl,
+      country: profile.country || String(existingUser.country ?? 'KR'),
+      agreedToTerms: profile.agreedToTerms,
+      applixirUserId: isValidApplixirUserId(firstParam(existingUser.applixirUserId))
+        ? firstParam(existingUser.applixirUserId)
+        : profile.applixirUserId,
+      gameHistory: bootstrap ? sanitizeHistory(existingUser.gameHistory) : profile.gameHistory,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  });
+
+  return {};
 });
 
 export const claimDailyHeartReward = functions.https.onCall(async (request) => {

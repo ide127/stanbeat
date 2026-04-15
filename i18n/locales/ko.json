@@ -317,7 +317,6 @@
   "accountSuspended": "이 계정은 이용이 정지되었습니다.",
   "unauthorizedDomain": "이 도메인에서는 로그인할 수 없습니다. 관리자에게 문의해 주세요.",
   "loginFailed": "구글 로그인에 실패했습니다. 다시 시도해 주세요.",
-  "loginSessionSyncFailed": "구글 인증은 완료되었지만 StanBeat 계정 동기화를 끝내지 못했습니다. 세션을 취소했으니 다시 시도해 주세요.",
   "serverTimeError": "서버 시간을 확인할 수 없습니다. 네트워크 연결을 확인해 주세요.",
   "gameCancelledTabSwitch": "게임 중 다른 화면으로 이동하여 게임이 취소되었습니다.",
   "leaveGameTitle": "게임을 종료할까요?",

@@ -317,7 +317,6 @@
   "accountSuspended": "This account has been suspended.",
   "unauthorizedDomain": "Login not available on this domain. Please contact admin.",
   "loginFailed": "Google login failed. Please try again.",
-  "loginSessionSyncFailed": "Google authentication succeeded, but StanBeat could not finish account sync. The session was canceled. Please try again.",
   "serverTimeError": "(Cannot verify server time. Please check your network connection.)",
   "gameCancelledTabSwitch": "Game cancelled because you switched tabs.",
   "leaveGameTitle": "Leave this run?",

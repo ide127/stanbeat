@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "Bạn chưa thể nhận được phần thưởng đăng nhập 6 giờ.",
   "maxHeartsReached": "Bạn chỉ có thể lưu trữ tối đa 3 trái tim. Vui lòng chơi trò chơi trước.",
   "stdDevGaussian": "độ lệch chuẩn σ",
-  "loginSessionSyncFailed": "Xác thực Google đã hoàn tất nhưng không thể hoàn tất đồng bộ hóa tài khoản StanBeat. Chúng tôi đã hủy phiên của bạn. Vui lòng thử lại.",
   "leaveGameTitle": "Tôi có nên bỏ cuộc chơi không?",
   "leaveGameMessage": "Nếu bạn rời đi bây giờ, vở kịch này sẽ bị hủy và trái tim sẽ không được trả lại.",
   "cancelAction": "tiếp tục chơi",

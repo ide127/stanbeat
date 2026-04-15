@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "Hindi ka pa makakatanggap ng 6-hour login reward.",
   "maxHeartsReached": "Maaari ka lamang mag-imbak ng hanggang 3 puso. Paki laro muna.",
   "stdDevGaussian": "karaniwang paglihis σ",
-  "loginSessionSyncFailed": "Nakumpleto ang pagpapatotoo ng Google, ngunit hindi makumpleto ang pag-synchronize ng StanBeat account. Kinansela namin ang iyong session. Pakisubukang muli.",
   "leaveGameTitle": "Dapat ba akong umalis sa laro?",
   "leaveGameMessage": "Kung aalis ka ngayon, kakanselahin ang dulang ito at hindi na ibabalik ang mga puso.",
   "cancelAction": "ituloy ang paglalaro",

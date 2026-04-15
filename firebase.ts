@@ -51,6 +51,34 @@ if (!isConfigured) {
 
 type LooseRecord = Record<string, unknown>;
 
+const isPermissionDeniedError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  return String((error as { code?: unknown }).code ?? '') === 'permission-denied';
+};
+
+const waitFor = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const withAuthRetry = async <T>(label: string, operation: () => Promise<T>): Promise<T> => {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!auth?.currentUser || !isPermissionDeniedError(error) || attempt === 3) {
+        throw error;
+      }
+
+      console.warn(`[Firebase] ${label} failed with permission-denied. Refreshing auth token and retrying (${attempt}/3).`, error);
+      await auth.currentUser.getIdToken(true).catch(() => auth.currentUser?.getIdToken());
+      await waitFor(200 * attempt);
+    }
+  }
+
+  throw lastError;
+};
+
 export interface ServerUserSnapshot {
   hearts: number;
   bestTime: number | null;
@@ -149,18 +177,27 @@ export function onAuthStateChanged(callback: (user: FirebaseUser | null) => void
 
 export async function saveUserProfile(userId: string, data: Record<string, unknown>): Promise<void> {
   if (!db) throw new Error('[Firebase] Firestore not initialized. Cannot save user profile.');
-  await setDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() }, { merge: true });
+  await withAuthRetry(`saveUserProfile(${userId})`, async () => {
+    await setDoc(doc(db, 'users', userId), { ...data, updatedAt: serverTimestamp() }, { merge: true });
+  });
+}
+
+export async function syncUserProfileRemote(profile: Record<string, unknown>, bootstrap: boolean = false): Promise<void> {
+  await callFunction<{ profile: Record<string, unknown>; bootstrap: boolean }, Record<string, never>>('syncUserProfile', {
+    profile,
+    bootstrap,
+  });
 }
 
 export async function getUserProfile(userId: string): Promise<Record<string, unknown> | null> {
   if (!db) throw new Error('[Firebase] Firestore not initialized. Cannot get user profile.');
-  const snap = await getDoc(doc(db, 'users', userId));
+  const snap = await withAuthRetry(`getUserProfile(${userId})`, async () => getDoc(doc(db, 'users', userId)));
   return snap.exists() ? (snap.data() as Record<string, unknown>) : null;
 }
 
 export async function getLeaderboardEntry(userId: string): Promise<Record<string, unknown> | null> {
   if (!db) throw new Error('[Firebase] Firestore not initialized. Cannot get leaderboard entry.');
-  const snap = await getDoc(doc(db, 'leaderboard', userId));
+  const snap = await withAuthRetry(`getLeaderboardEntry(${userId})`, async () => getDoc(doc(db, 'leaderboard', userId)));
   return snap.exists() ? (snap.data() as Record<string, unknown>) : null;
 }
 

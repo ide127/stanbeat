@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.rewardReferral = exports.claimAdReward = exports.submitPlayResult = exports.claimDailyHeartReward = exports.consumeHeartForGame = exports.applixirCallback = void 0;
+exports.rewardReferral = exports.claimAdReward = exports.submitPlayResult = exports.claimDailyHeartReward = exports.syncUserProfile = exports.consumeHeartForGame = exports.applixirCallback = void 0;
 const admin = require("firebase-admin");
 const functions = require("firebase-functions");
 const params_1 = require("firebase-functions/params");
@@ -107,6 +107,24 @@ function buildUserSnapshot(userData) {
         gameHistory: sanitizeHistory(userData.gameHistory),
         rewardedVideoStreak: Math.max(0, Math.floor(asNumber(userData.rewardedVideoStreak))),
         referralRewardGranted: Boolean(userData.referralRewardGranted),
+    };
+}
+function sanitizeUserProfilePayload(payload) {
+    var _a, _b, _c, _d, _e;
+    const applixirUserId = firstParam(payload.applixirUserId);
+    if (!isValidApplixirUserId(applixirUserId)) {
+        throw new functions.https.HttpsError('invalid-argument', 'Invalid applixirUserId');
+    }
+    return {
+        nickname: (_a = firstParam(payload.nickname)) !== null && _a !== void 0 ? _a : '',
+        email: (_b = firstParam(payload.email)) !== null && _b !== void 0 ? _b : '',
+        avatarUrl: (_c = firstParam(payload.avatarUrl)) !== null && _c !== void 0 ? _c : '',
+        country: (_d = firstParam(payload.country)) !== null && _d !== void 0 ? _d : 'KR',
+        agreedToTerms: Boolean(payload.agreedToTerms),
+        applixirUserId,
+        gameHistory: sanitizeHistory(payload.gameHistory),
+        referralCode: firstParam(payload.referralCode),
+        referredBy: (_e = firstParam(payload.referredBy)) !== null && _e !== void 0 ? _e : null,
     };
 }
 async function bumpGlobalRevenue(revenueDelta) {
@@ -293,6 +311,57 @@ exports.consumeHeartForGame = functions.https.onCall(async (request) => {
         response = { status: 'consumed', user: buildUserSnapshot(nextUser) };
     });
     return response;
+});
+exports.syncUserProfile = functions.https.onCall(async (request) => {
+    var _a;
+    const userId = (_a = request.auth) === null || _a === void 0 ? void 0 : _a.uid;
+    if (!userId) {
+        throw new functions.https.HttpsError('unauthenticated', 'Login required');
+    }
+    const payload = normalizePayload(request.data);
+    const profile = sanitizeUserProfilePayload(normalizePayload(payload.profile));
+    const bootstrap = Boolean(payload.bootstrap);
+    const userRef = db.collection('users').doc(userId);
+    await db.runTransaction(async (transaction) => {
+        var _a, _b, _c;
+        const userSnap = await transaction.get(userRef);
+        if (!userSnap.exists) {
+            transaction.set(userRef, {
+                nickname: profile.nickname,
+                email: profile.email,
+                avatarUrl: profile.avatarUrl,
+                country: profile.country,
+                hearts: 1,
+                bestTime: null,
+                role: 'USER',
+                lastDailyHeart: null,
+                agreedToTerms: profile.agreedToTerms,
+                banned: false,
+                gameHistory: [],
+                referralCode: (_a = profile.referralCode) !== null && _a !== void 0 ? _a : userId.slice(0, 8),
+                referredBy: profile.referredBy,
+                referralRewardGranted: false,
+                rewardedVideoStreak: 0,
+                applixirUserId: profile.applixirUserId,
+                updatedAt: serverTimestamp(),
+            }, { merge: true });
+            return;
+        }
+        const existingUser = userSnap.data();
+        transaction.set(userRef, {
+            nickname: profile.nickname || String((_b = existingUser.nickname) !== null && _b !== void 0 ? _b : ''),
+            email: profile.email,
+            avatarUrl: profile.avatarUrl,
+            country: profile.country || String((_c = existingUser.country) !== null && _c !== void 0 ? _c : 'KR'),
+            agreedToTerms: profile.agreedToTerms,
+            applixirUserId: isValidApplixirUserId(firstParam(existingUser.applixirUserId))
+                ? firstParam(existingUser.applixirUserId)
+                : profile.applixirUserId,
+            gameHistory: bootstrap ? sanitizeHistory(existingUser.gameHistory) : profile.gameHistory,
+            updatedAt: serverTimestamp(),
+        }, { merge: true });
+    });
+    return {};
 });
 exports.claimDailyHeartReward = functions.https.onCall(async (request) => {
     var _a;

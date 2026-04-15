@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "Sie können die 6-Stunden-Login-Belohnung noch nicht erhalten.",
   "maxHeartsReached": "Sie können nur bis zu 3 Herzen speichern. Bitte spielen Sie zuerst das Spiel.",
   "stdDevGaussian": "Standardabweichung σ",
-  "loginSessionSyncFailed": "Die Google-Authentifizierung wurde abgeschlossen, die Synchronisierung des StanBeat-Kontos konnte jedoch nicht abgeschlossen werden. Wir haben Ihre Sitzung abgesagt. Bitte versuchen Sie es erneut.",
   "leaveGameTitle": "Soll ich das Spiel beenden?",
   "leaveGameMessage": "Wenn Sie jetzt gehen, wird dieses Spiel abgesagt und die Herzen werden nicht zurückgegeben.",
   "cancelAction": "Spiel weiter",

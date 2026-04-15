@@ -341,7 +341,6 @@
   "dailyHeartAlreadyClaimed": "Henüz 6 saatlik giriş ödülünü alamazsınız.",
   "maxHeartsReached": "En fazla 3 kalp saklayabilirsiniz. Lütfen önce oyunu oynayın.",
   "stdDevGaussian": "standart sapma σ",
-  "loginSessionSyncFailed": "Google kimlik doğrulaması tamamlandı ancak StanBeat hesap senkronizasyonu tamamlanamadı. Seansınızı iptal ettik. Lütfen tekrar deneyin.",
   "leaveGameTitle": "Oyunu bırakmalı mıyım?",
   "leaveGameMessage": "Eğer şimdi giderseniz bu oyun iptal edilecek ve kalpler geri verilmeyecektir.",
   "cancelAction": "oynamaya devam et",
