@@ -44,7 +44,7 @@ function isFailureStatus(status) {
 function isFinalRewardStatus(status) {
     if (!status)
         return false;
-    return /^(complete|completed|reward|rewarded|success|adcomplete|adcompleted|adwatched)$/i.test(status.replace(/[^a-z]/gi, ''));
+    return /^(complete|completed|reward|rewarded|success|adcomplete|adcompleted|adwatched|alladscompleted|thankyoumodalclosed)$/i.test(status.replace(/[^a-z]/gi, ''));
 }
 function isValidApplixirUserId(value) {
     return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);

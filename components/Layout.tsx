@@ -97,7 +97,7 @@ export const Header = ({ onOpenLanguage }: { onOpenLanguage: () => void }) => {
 
 // ─── 사이드 메뉴 컴포넌트 (로그인/로그아웃, 홈, 리더보드, 히스토리 등) ───
 export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () => void; onOpenHearts: () => void }) => {
-  const { isMenuOpen, toggleMenu, currentUser, logout, login, setView, currentView, isGameFinished, requestGameExit, language, startGame } = useStore();
+  const { isMenuOpen, toggleMenu, currentUser, logout, login, setView, currentView, isGameFinished, requestGameExit, language, startGame, gameStartPending } = useStore();
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   if (!isMenuOpen) return null;
@@ -150,7 +150,7 @@ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () 
         </div>
         <div className="flex-1 p-4 space-y-2">
           {currentUser && (
-          <MenuItem icon={<Play size={20} />} label={t(language, 'playGame')} color="text-[#00FFFF]" onClick={async () => {
+          <MenuItem icon={gameStartPending ? <RefreshCw size={20} className="animate-spin" /> : <Play size={20} />} label={gameStartPending ? t(language, 'startingGame') : t(language, 'playGame')} color="text-[#00FFFF]" disabled={gameStartPending} onClick={async () => {
               toggleMenu();
               if (!currentUser) {
                 void login();
@@ -186,8 +186,8 @@ export const SideMenu = ({ onOpenLanguage, onOpenHearts }: { onOpenLanguage: () 
   );
 };
 
-const MenuItem = ({ icon, label, color = 'text-white', onClick }: { icon: React.ReactNode; label: string; color?: string; onClick?: () => void }) => (
-  <button onClick={() => { vibrate(); onClick?.(); }} className="flex items-center gap-4 w-full p-3 hover:bg-white/5 btn-squishy rounded-lg transition-all">
+const MenuItem = ({ icon, label, color = 'text-white', onClick, disabled = false }: { icon: React.ReactNode; label: string; color?: string; onClick?: () => void; disabled?: boolean }) => (
+  <button disabled={disabled} onClick={() => { if (disabled) return; vibrate(); onClick?.(); }} className="flex items-center gap-4 w-full p-3 hover:bg-white/5 btn-squishy rounded-lg transition-all disabled:opacity-60 disabled:cursor-wait">
     <div className={color}>{icon}</div>
     <span className="text-white/90 font-medium">{label}</span>
   </button>

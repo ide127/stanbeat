@@ -67,7 +67,7 @@ function isFailureStatus(status: string | undefined): boolean {
 
 function isFinalRewardStatus(status: string | undefined): boolean {
   if (!status) return false;
-  return /^(complete|completed|reward|rewarded|success|adcomplete|adcompleted|adwatched)$/i.test(status.replace(/[^a-z]/gi, ''));
+  return /^(complete|completed|reward|rewarded|success|adcomplete|adcompleted|adwatched|alladscompleted|thankyoumodalclosed)$/i.test(status.replace(/[^a-z]/gi, ''));
 }
 
 function isValidApplixirUserId(value: string | undefined): value is string {

@@ -105,6 +105,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
     activeFandomId,
     setActiveFandom,
     deferredPrompt,
+    gameStartPending,
   } = useStore();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
@@ -210,7 +211,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
   })();
 
   const handlePlay = async () => {
-    if (transitioning || playRequestPendingRef.current) return;
+    if (transitioning || gameStartPending || playRequestPendingRef.current) return;
     playRequestPendingRef.current = true;
     vibrate();
     const result = await requestGameStart(onShowHearts);
@@ -225,7 +226,7 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
       setView('GAME');
       setTransitioning(false);
       playRequestPendingRef.current = false;
-    }, 900);
+    }, 180);
   };
 
   const rewardImages = [
@@ -342,11 +343,15 @@ const HomeScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
         </span>
       </div>
 
-      <button onClick={() => { void handlePlay(); }} className="sticky bottom-3 z-30 w-full mt-3 relative overflow-hidden bg-[#FF0080] text-white font-black text-xl py-4 rounded-2xl btn-squishy pulse-ring shadow-[0_10px_30px_rgba(255,0,128,0.35)]">
+      <button
+        onClick={() => { void handlePlay(); }}
+        disabled={gameStartPending || transitioning}
+        className="sticky bottom-3 z-30 w-full mt-3 relative overflow-hidden bg-[#FF0080] text-white font-black text-xl py-4 rounded-2xl btn-squishy pulse-ring shadow-[0_10px_30px_rgba(255,0,128,0.35)] disabled:cursor-wait disabled:opacity-75"
+      >
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-[shimmer_2s_linear_infinite]" />
         <div className="relative flex items-center justify-center gap-3">
-          <Play fill="white" />
-          <span>{t(language, 'playNowFandom', { fandom: activeFandom.displayName })}</span>
+          {gameStartPending || transitioning ? <RefreshCw size={22} className="animate-spin" /> : <Play fill="white" />}
+          <span>{gameStartPending || transitioning ? t(language, 'startingGame') : t(language, 'playNowFandom', { fandom: activeFandom.displayName })}</span>
         </div>
       </button>
 
@@ -1315,7 +1320,7 @@ const HistoryScreen = () => {
 // 현재 속한 리그의 다른 유저 기록(가짜+진짜)을 동기화하여 보여주며,
 // 내 랭킹과 1등과의 격차 등을 제공합니다. 비로그인 유저에게는 샘플(게스트) 리그를 보여줍니다.
 const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
-  const { setView, leaderboard, fetchLeaderboard, currentUser, language, league, initLeague, getLeagueGap, getLeagueCountdown, login, randConfig } = useStore();
+  const { setView, leaderboard, fetchLeaderboard, currentUser, language, league, initLeague, getLeagueGap, getLeagueCountdown, login, randConfig, gameStartPending } = useStore();
   const [countdown, setCountdown] = useState('10:00');
   const [guestData, setGuestData] = useState<{ winners: import('./types').LeaderboardEntry[]; totalLeagues: number } | null>(null);
 
@@ -1472,8 +1477,8 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
             if (result === 'started') {
               setView('GAME');
             }
-          }} className="w-full bg-gradient-to-r from-[#FF0080] to-[#FF6B00] text-white font-bold py-3 rounded-lg btn-squishy text-lg">
-            {t(language, 'startGameCta')}
+          }} disabled={gameStartPending} className="w-full bg-gradient-to-r from-[#FF0080] to-[#FF6B00] text-white font-bold py-3 rounded-lg btn-squishy text-lg disabled:cursor-wait disabled:opacity-70">
+            {gameStartPending ? t(language, 'startingGame') : t(language, 'startGameCta')}
           </button>
         </div>
       )}
@@ -1527,8 +1532,8 @@ const LeaderboardScreen = ({ onShowHearts }: { onShowHearts: () => void }) => {
             if (result === 'started') {
               setView('GAME');
             }
-          }} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy">
-            {t(language, 'retry')}
+          }} disabled={gameStartPending} className="w-full bg-[#00FFFF] text-black font-bold py-3 rounded-lg btn-squishy disabled:cursor-wait disabled:opacity-70">
+            {gameStartPending ? t(language, 'startingGame') : t(language, 'retry')}
           </button>
         </div>
       )}
@@ -2784,6 +2789,13 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
       : adFlowPhase === 'loading'
         ? t(language, 'loadingAd')
         : null;
+  const adButtonLabel = adFlowPhase === 'validating'
+    ? t(language, 'rewardValidationPending')
+    : adFlowPhase === 'watching'
+      ? t(language, 'watchingAd')
+      : adFlowPhase === 'loading'
+        ? t(language, 'loadingAd')
+        : t(language, 'watchAd');
 
   useEffect(() => {
     if (!isOpen) {
@@ -2893,15 +2905,15 @@ const HeartsModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
               className="w-full rounded-xl p-3 bg-[#00FFFF] text-black font-bold flex items-center justify-center gap-2 btn-squishy disabled:opacity-50"
             >
               {isAdBusy ? (
-                <span className="inline-block w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                <span className="relative inline-flex h-5 w-5 items-center justify-center" aria-hidden="true">
+                  <span className="absolute inset-0 rounded-full border-2 border-black/15" />
+                  <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-black border-r-black/80 animate-spin" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-black/75" />
+                </span>
               ) : (
                 <Video size={18} />
               )}
-              {adFlowPhase === 'validating'
-                ? t(language, 'rewardValidationPending')
-                : isAdBusy
-                ? t(language, 'loadingAd')
-                : t(language, 'watchAd')}
+              {adButtonLabel}
             </button>
             <div className="flex flex-col items-center">
               {adStatusText && (

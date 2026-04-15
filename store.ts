@@ -124,6 +124,7 @@ interface AppState {
   currentView: ViewState;
   activeFandomId: FandomId;
   isGameFinished: boolean;
+  gameStartPending: boolean;
   gameSessionActive: boolean;
   gameRunStartedAt: number | null;
   gameExitRequested: boolean;
@@ -309,6 +310,41 @@ const commitUserState = (
 const persistUserProfileRemote = async (user: User, useBootstrapPayload: boolean = false): Promise<void> => {
   if (!isFirebaseEnabled || !user.id) return;
   await saveUserProfile(user.id, useBootstrapPayload ? buildInitialUserPayload(user) : buildUserProfilePayload(user));
+};
+
+const clearLocalSessionState = (
+  setState: (partial: Partial<AppState>) => void,
+  adminStatsUnsubscribe: (() => void) | null,
+) => {
+  if (adminStatsUnsubscribe) {
+    adminStatsUnsubscribe();
+  }
+  if (rewardToastTimeout) {
+    clearTimeout(rewardToastTimeout);
+    rewardToastTimeout = null;
+  }
+  safeStorage.set('stanbeat_user', null);
+  safeStorage.set('stanbeat_league', null);
+  safeStorage.set('stanbeat_leaderboard', []);
+  safeStorage.set('stanbeat_user_streak', 0);
+  setState({
+    currentUser: null,
+    currentView: 'HOME',
+    gameSessionActive: false,
+    gameRunStartedAt: null,
+    isGameFinished: false,
+    termsAccepted: false,
+    videoWatchCount: 0,
+    adminStatsUnsubscribe: null,
+    rewardMessage: null,
+    alertDialog: null,
+    confirmDialog: null,
+    league: null,
+    leaderboard: [],
+    adminUsers: [],
+    loginPromptRequested: false,
+    termsPromptRequested: false,
+  });
 };
 
 const applyServerSnapshotToUser = (user: User, snapshot: ServerUserSnapshot): User => ({
@@ -539,12 +575,15 @@ const buildUserFromAuth = async (
   referralCode: string | null,
 ): Promise<{ user: User; useBootstrapPayload: boolean }> => {
   const newNickname = generateNickname();
-  const initialCountry = (await detectCountryFromIP()) || 'KR';
   const existingUser = safeStorage.get<User | null>('stanbeat_user', null);
   const [fbProfile, leaderboardEntry] = await Promise.all([
     getUserProfile(fbUser.uid),
     getLeaderboardEntry(fbUser.uid).catch(() => null),
   ]);
+  const initialCountry = (await detectCountryFromIP().catch((error) => {
+    console.warn('[buildUserFromAuth] Failed to resolve country from IP, defaulting to KR:', error);
+    return null;
+  })) || 'KR';
 
   const user: User = {
     id: fbUser.uid,
@@ -684,6 +723,7 @@ export const useStore = create<AppState>((set, get) => ({
   currentView: 'HOME',
   activeFandomId: readStoredFandomId(),
   isGameFinished: false,
+  gameStartPending: false,
   gameSessionActive: false,
   gameRunStartedAt: null,
   gameExitRequested: false,
@@ -977,6 +1017,7 @@ export const useStore = create<AppState>((set, get) => ({
       return false;
     }
 
+    let authenticatedUser: FirebaseUser | null = null;
     try {
       const userAgent = navigator.userAgent || navigator.vendor || (window as Window & { opera?: string }).opera || '';
       const isEmbeddedBrowser = /Instagram|FBAN|FBAV|Snapchat|Line|Kakao|Twitter|Threads|TikTok|Daum/i.test(userAgent);
@@ -985,15 +1026,26 @@ export const useStore = create<AppState>((set, get) => ({
         return false;
       }
 
-      const fbUser = await firebaseSignInWithGoogle();
-      if (!fbUser) throw new Error('Google sign-in returned no user');
-      const { user, useBootstrapPayload } = await buildUserFromAuth(fbUser, refCode);
+      authenticatedUser = await firebaseSignInWithGoogle();
+      if (!authenticatedUser) throw new Error('Google sign-in returned no user');
+      const { user, useBootstrapPayload } = await buildUserFromAuth(authenticatedUser, refCode);
+
+      if (user.banned) {
+        await firebaseSignOut().catch(console.error);
+        clearLocalSessionState(set, get().adminStatsUnsubscribe);
+        get().showAlertDialog({
+          title: t(get().language, 'adminTitle'),
+          message: t(get().language, 'accountSuspended'),
+          tone: 'warning',
+        });
+        return false;
+      }
+
+      await persistUserProfileRemote(user, useBootstrapPayload);
 
       safeStorage.set('stanbeat_user', user);
       safeStorage.set('stanbeat_user_streak', user.rewardedVideoStreak);
       set({ currentUser: user, termsAccepted: user.agreedToTerms, loginPromptRequested: false, termsPromptRequested: false, videoWatchCount: user.rewardedVideoStreak });
-
-      await persistUserProfileRemote(user, useBootstrapPayload);
 
       if (user.hearts < MAX_HEARTS) {
         get().claimDailyHeart()
@@ -1003,15 +1055,6 @@ export const useStore = create<AppState>((set, get) => ({
             }
           })
           .catch((error) => console.error('[login] Failed to claim login heart:', error));
-      }
-
-      if (user.banned) {
-        get().showAlertDialog({
-          title: t(get().language, 'adminTitle'),
-          message: t(get().language, 'accountSuspended'),
-          tone: 'warning',
-        });
-        return false;
       }
 
       return true;
@@ -1035,9 +1078,15 @@ export const useStore = create<AppState>((set, get) => ({
           tone: 'error',
         });
       } else {
+        if (authenticatedUser) {
+          await firebaseSignOut().catch((signOutError) => {
+            console.error('[login] Failed to roll back Firebase auth after incomplete login:', signOutError);
+          });
+          clearLocalSessionState(set, get().adminStatsUnsubscribe);
+        }
         get().showAlertDialog({
           title: t(get().language, 'loginRequired'),
-          message: t(get().language, 'loginFailed'),
+          message: authenticatedUser ? t(get().language, 'loginSessionSyncFailed') : t(get().language, 'loginFailed'),
           tone: 'error',
         });
       }
@@ -1050,6 +1099,17 @@ export const useStore = create<AppState>((set, get) => ({
 
     try {
       const { user, useBootstrapPayload } = await buildUserFromAuth(authUser, null);
+      if (user.banned) {
+        await firebaseSignOut().catch(console.error);
+        clearLocalSessionState(set, get().adminStatsUnsubscribe);
+        get().showAlertDialog({
+          title: t(get().language, 'adminTitle'),
+          message: t(get().language, 'accountSuspended'),
+          tone: 'warning',
+        });
+        return;
+      }
+      await persistUserProfileRemote(user, useBootstrapPayload);
       const committed = commitUserState(get(), user);
       set({
         ...committed,
@@ -1057,7 +1117,6 @@ export const useStore = create<AppState>((set, get) => ({
         loginPromptRequested: false,
         termsPromptRequested: false,
       });
-      await persistUserProfileRemote(user, useBootstrapPayload);
       if (user.hearts < MAX_HEARTS) {
         get().claimDailyHeart()
           .then((status) => {
@@ -1070,6 +1129,15 @@ export const useStore = create<AppState>((set, get) => ({
       get().initLeague();
     } catch (error) {
       console.error('[restoreSessionFromAuth] Failed to restore authenticated session:', error);
+      await firebaseSignOut().catch((signOutError) => {
+        console.error('[restoreSessionFromAuth] Failed to roll back Firebase auth after restore failure:', signOutError);
+      });
+      clearLocalSessionState(set, get().adminStatsUnsubscribe);
+      get().showAlertDialog({
+        title: t(get().language, 'loginRequired'),
+        message: t(get().language, 'loginSessionSyncFailed'),
+        tone: 'error',
+      });
     }
   },
 
@@ -1077,34 +1145,7 @@ export const useStore = create<AppState>((set, get) => ({
     if (isFirebaseEnabled) {
       firebaseSignOut().catch(console.error);
     }
-    const unsub = get().adminStatsUnsubscribe;
-    if (unsub) { unsub(); }
-    if (rewardToastTimeout) {
-      clearTimeout(rewardToastTimeout);
-      rewardToastTimeout = null;
-    }
-    safeStorage.set('stanbeat_user', null);
-    safeStorage.set('stanbeat_league', null);
-    safeStorage.set('stanbeat_leaderboard', []);
-    safeStorage.set('stanbeat_user_streak', 0);
-    set({
-      currentUser: null,
-      currentView: 'HOME',
-      gameSessionActive: false,
-      gameRunStartedAt: null,
-      isGameFinished: false,
-      termsAccepted: false,
-      videoWatchCount: 0,
-      adminStatsUnsubscribe: null,
-      rewardMessage: null,
-      alertDialog: null,
-      confirmDialog: null,
-      league: null,
-      leaderboard: [],
-      adminUsers: [],
-      loginPromptRequested: false,
-      termsPromptRequested: false,
-    });
+    clearLocalSessionState(set, get().adminStatsUnsubscribe);
   },
 
   startGame: async () => {
@@ -1136,6 +1177,7 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     try {
+      set({ gameStartPending: true });
       const response = await consumeHeartForGameRemote();
       if (response.user) {
         const nextUser = applyServerSnapshotToUser(user, response.user);
@@ -1172,6 +1214,8 @@ export const useStore = create<AppState>((set, get) => ({
         tone: 'error',
       });
       return 'blocked';
+    } finally {
+      set({ gameStartPending: false });
     }
   },
 
@@ -1533,14 +1577,16 @@ export const useStore = create<AppState>((set, get) => ({
 
     try {
       const response = await claimAdRewardRemote(rewardId);
+      const nextUser = response.user ? applyServerSnapshotToUser(user, response.user) : null;
       if (response.user) {
-        const nextUser = applyServerSnapshotToUser(user, response.user);
         const committed = commitUserState(get(), nextUser);
         set(committed);
       }
+      const grantedFromSnapshot = nextUser ? Math.max(0, Number(nextUser.hearts ?? 0) - Number(user.hearts ?? 0)) : 0;
+      const grantedHearts = Math.max(0, Number(response.grantedHearts ?? 0), grantedFromSnapshot);
       return {
-        claimed: response.status === 'claimed',
-        grantedHearts: Math.max(0, Number(response.grantedHearts ?? 0)),
+        claimed: response.status === 'claimed' || (response.status === 'already_claimed' && grantedHearts > 0),
+        grantedHearts,
       };
     } catch (error) {
       console.error('[claimPendingAdReward] Failed to claim ad reward:', error);
